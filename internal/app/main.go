@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"morrow/internal/config"
 	"morrow/internal/db"
 	"morrow/internal/env"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,43 +134,77 @@ func CreateApp(name string, execPath string, args []string) error {
 	return err
 }
 
-// StartApp launches the application.
+// StartApp launches the application and a log relay sidecar.
 func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 	app, err := GetAppDetail(name)
 	if err != nil {
 		return 0, err
 	}
 
+	// Create a pipe: app stdout/stderr → relay stdin.
+	pipeR, pipeW, err := os.Pipe()
+	if err != nil {
+		return 0, fmt.Errorf("failed to create log pipe: %w", err)
+	}
+
+	// Launch the log relay sidecar (morrow _relay <app-name>).
+	selfExe, err := os.Executable()
+	if err != nil {
+		return 0, fmt.Errorf("failed to locate morrow executable: %w", err)
+	}
+	relayCmd := exec.Command(selfExe, "_relay", name)
+	relayCmd.Stdin = pipeR
+	detachRelayProcess(relayCmd)
+	if err := relayCmd.Start(); err != nil {
+		pipeR.Close()
+		pipeW.Close()
+		return 0, fmt.Errorf("failed to start log relay: %w", err)
+	}
+	relayPID := relayCmd.Process.Pid
+	pipeR.Close() // parent's copy of read end is no longer needed
+
+	// Save relay PID so StopApp can kill it later.
+	_ = os.WriteFile(
+		config.GetRelayPIDFilePath(name),
+		[]byte(strconv.Itoa(relayPID)),
+		0644,
+	)
+
+	// Launch the managed app, writing stdout/stderr into the pipe.
 	cmd := exec.Command(app.ExecutablePath, app.Arguments...)
 	cmd.Env = os.Environ()
-	
 	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_ID=%s", app.ID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_NAME=%s", app.Name))
 
 	for k, v := range app.EnvironmentVariables {
 		if v == "****" {
+			pipeW.Close()
+			terminateProcess(relayPID)
 			return 0, fmt.Errorf("cannot start app with secured variables as a non-root user")
 		}
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
-
 	for k, v := range inlineEnvs {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = pipeW
+	cmd.Stderr = pipeW
+	detachProcess(cmd)
 
 	if err := cmd.Start(); err != nil {
+		pipeW.Close()
+		terminateProcess(relayPID)
 		return 0, fmt.Errorf("failed to start process: %w", err)
 	}
+	pipeW.Close() // parent's copy of write end is no longer needed
 
 	pid := cmd.Process.Pid
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
 	_, err = db.DB.Exec(`
 		UPDATE applications
-		SET application_status = 'running', application_pid = ?, application_status_time = ?, 
+		SET application_status = 'running', application_pid = ?, application_status_time = ?,
 		    application_last_run_time = ?, application_update_time = ?
 		WHERE application_name = ?
 	`, pid, now, now, now, name)
@@ -190,10 +226,19 @@ func StopApp(name string) error {
 	// Call platform-specific termination logic
 	_ = terminateProcess(app.PID)
 
+	// Kill the log relay sidecar if it is still running.
+	relayPIDFile := config.GetRelayPIDFilePath(name)
+	if data, readErr := os.ReadFile(relayPIDFile); readErr == nil {
+		if relayPID, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && relayPID > 0 {
+			_ = terminateProcess(relayPID)
+		}
+		_ = os.Remove(relayPIDFile)
+	}
+
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	_, err = db.DB.Exec(`
 		UPDATE applications
-		SET application_status = 'stopped', application_pid = 0, 
+		SET application_status = 'stopped', application_pid = 0,
 		    application_status_time = ?, application_update_time = ?
 		WHERE application_name = ?
 	`, now, now, name)

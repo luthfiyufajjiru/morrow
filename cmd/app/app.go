@@ -1,13 +1,17 @@
 package app
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"morrow/internal/app"
+	"morrow/internal/config"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/nxadm/tail"
 	"github.com/spf13/cobra"
 )
 
@@ -189,8 +193,63 @@ var UpdateAppCmd = &cobra.Command{
 	},
 }
 
+var logsLines int
+var followLogs bool
+
+var LogsAppCmd = &cobra.Command{
+	Use:   "logs [app-name]",
+	Short: "Show logs for an application",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		appName := args[0]
+		logPath := config.GetLogFilePath(appName)
+
+		f, err := os.Open(logPath)
+		if err != nil {
+			log.Fatalf("No logs found for %s (has it been started?)", appName)
+		}
+
+		// Read entire file to memory for simple tailing (standard behavior)
+		var lines []string
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		f.Close()
+
+		start := 0
+		if logsLines > 0 && len(lines) > logsLines {
+			start = len(lines) - logsLines
+		}
+
+		// Print initial lines
+		for _, l := range lines[start:] {
+			fmt.Println(l)
+		}
+
+		// If follow mode is enabled, start tailing the file
+		if followLogs {
+			t, err := tail.TailFile(logPath, tail.Config{
+				Follow:    true, // Keep reading as file grows
+				ReOpen:    true, // Auto reopen if lumberjack rotates it
+				MustExist: true,
+				Location:  &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END}, // Seek to end
+				Logger:    tail.DiscardingLogger, // Silence internal tail logs
+			})
+			if err != nil {
+				log.Fatalf("Failed to follow logs: %v", err)
+			}
+			for line := range t.Lines {
+				fmt.Println(line.Text)
+			}
+		}
+	},
+}
+
 func init() {
 	DetailAppCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	StartAppCmd.Flags().StringSliceVarP(&inlineEnvs, "env", "e", []string{}, "Inline environment variables (KEY=VALUE)")
 	DeleteAppCmd.Flags().BoolVarP(&forceDelete, "force", "f", false, "Force delete even if running (stops the app first)")
+	LogsAppCmd.Flags().IntVarP(&logsLines, "lines", "n", 50, "Number of recent lines to show (0 = all)")
+	LogsAppCmd.Flags().BoolVarP(&followLogs, "follow", "f", false, "Follow log output continuously")
 }
