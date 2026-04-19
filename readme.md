@@ -25,6 +25,10 @@ make clean
 All build outputs are output flatly into the `/dist/v<version>/` directory.
 Each file is distinctly named using the `morrow-v<version>_<platform>` schema.
 
+**Supported Targets:**
+- **Windows**: x64, x86, ARM64 (plus `.msi` installers)
+- **Linux**: amd64 (x86_64), arm64 (aarch64), arm (v7/32-bit)
+
 **Versioning:**
 The project uses a single source of truth for its version: the `build.xml` file.
 ```bash
@@ -167,6 +171,19 @@ morrow stop py-app
 morrow delete py-app
 ```
 
+
+
+## Architecture
+### Sidecar Relay Pattern
+Morrow implements a **Sidecar Relay Pattern** for robust process management. 
+
+When an application is started:
+1. **Relay Spawn**: Morrow launches a detached "relay" process for that specific application.
+2. **Process Isolation**: The relay process detaches from the parent terminal session, ensuring the application continues running after the user logs out or closes the terminal.
+3. **Log Management**: The relay handles real-time logging, piping the application's `stdout` and `stderr` to rotating log files (using the `lumberjack` library).
+4. **State Sync**: The relay continuously synchronizes the application's status (running, stopped, crashed) with the Morrow database.
+
+This ensures high availability and reliable log capture without requiring a heavy daemon to be running constantly in the background.
 
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 
