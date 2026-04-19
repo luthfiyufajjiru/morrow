@@ -1,0 +1,52 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Morrow Process Manager" 
+           Manufacturer="Yufajjiru Lab" 
+           Version="$(var.Version)" 
+           UpgradeCode="8745814f-30c8-4c6a-ad89-546ba1949b5e" 
+           Scope="perMachine">
+    
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <ui:WixUI Id="WixUI_InstallDir" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="AppComponents" />
+      <ComponentRef Id="AppPath" />
+    </Feature>
+
+    <?if $(sys.BUILDARCH) = x64 ?>
+      <?define ProgramFilesFolder = ProgramFiles64Folder ?>
+      <?define BinarySource = "..\dist\v$(var.Version)\morrow-v$(var.Version)_windows-x64.exe" ?>
+    <?elseif $(sys.BUILDARCH) = x86 ?>
+      <?define ProgramFilesFolder = ProgramFilesFolder ?>
+      <?define BinarySource = "..\dist\v$(var.Version)\morrow-v$(var.Version)_windows-x86.exe" ?>
+    <?elseif $(sys.BUILDARCH) = arm64 ?>
+      <?define ProgramFilesFolder = ProgramFiles64Folder ?>
+      <?define BinarySource = "..\dist\v$(var.Version)\morrow-v$(var.Version)_windows-arm64.exe" ?>
+
+
+
+    <?else ?>
+      <?error Unknown platform: $(sys.BUILDARCH) ?>
+    <?endif ?>
+
+    <StandardDirectory Id="$(var.ProgramFilesFolder)">
+      <Directory Id="INSTALLFOLDER" Name="Morrow" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <Component Guid="8745814f-30c8-4c6a-ad89-546ba1949b5d">
+        <File Source="$(var.BinarySource)" Name="morrow.exe" />
+      </Component>
+    </ComponentGroup>
+
+    <Component Id="AppPath" Directory="INSTALLFOLDER" Guid="9745814f-30c8-4c6a-ad89-546ba1949b5f">
+      <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+    </Component>
+  </Package>
+</Wix>
+
+
