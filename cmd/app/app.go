@@ -233,8 +233,9 @@ var LogsAppCmd = &cobra.Command{
 				Follow:    true, // Keep reading as file grows
 				ReOpen:    true, // Auto reopen if lumberjack rotates it
 				MustExist: true,
-				Location:  &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END}, // Seek to end
-				Logger:    tail.DiscardingLogger, // Silence internal tail logs
+				Poll:      true, // fsnotify often hangs on Windows when another process writes
+				Location:  &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
+				Logger:    tail.DiscardingLogger,
 			})
 			if err != nil {
 				log.Fatalf("Failed to follow logs: %v", err)
