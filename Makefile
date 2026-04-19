@@ -9,6 +9,7 @@ WIN86_BIN = $(DIST_DIR)/morrow-v$(VERSION)_windows-x86.exe
 WINARM_BIN = $(DIST_DIR)/morrow-v$(VERSION)_windows-arm64.exe
 LINUX64_BIN = $(DIST_DIR)/morrow-v$(VERSION)_linux-amd64
 LINUXARM_BIN = $(DIST_DIR)/morrow-v$(VERSION)_linux-arm64
+LINUXARM32_BIN = $(DIST_DIR)/morrow-v$(VERSION)_linux-arm
 
 .PHONY: all build-go build-msi clean help set-version
 
@@ -34,6 +35,7 @@ build-go:
 	powershell -Command "$$env:GOOS='windows'; $$env:GOARCH='arm64'; $(GO_BUILD) -o $(WINARM_BIN) main.go"
 	powershell -Command "$$env:GOOS='linux'; $$env:GOARCH='amd64'; $(GO_BUILD) -o $(LINUX64_BIN) main.go"
 	powershell -Command "$$env:GOOS='linux'; $$env:GOARCH='arm64'; $(GO_BUILD) -o $(LINUXARM_BIN) main.go"
+	powershell -Command "$$env:GOOS='linux'; $$env:GOARCH='arm'; $$env:GOARM='7'; $(GO_BUILD) -o $(LINUXARM32_BIN) main.go"
 
 build-msi: build-go
 	@echo Building WiX installers...
