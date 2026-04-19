@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <BaseOutputPath>..\dist\wix-build\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>..\dist\wix-build\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>
