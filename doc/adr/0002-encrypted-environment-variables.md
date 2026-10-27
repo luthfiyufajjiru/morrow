@@ -15,8 +15,8 @@ We will use **Symmetric Encryption (AES-GCM)** tied to a **Root-Protected Master
 ### Key Details
 - **Algorithm:** AES-256-GCM (Authenticated Encryption).
 - **Key Storage:** A 32-byte random Master Key stored in a file:
-    - Production: `/etc/morrow/master.key`
-    - Development: `./.morrow.key`
+    - Production (system install): `/etc/morrow/.morrow.key` (Windows: `%ProgramData%\Morrow\.morrow.key`)
+    - Per-user (`MORROW_HOME`): `$MORROW_HOME/.morrow.key`; `MORROW_KEY_PATH` overrides both
 - **Permissions:** The key file must be owned by `root` with `0600` permissions.
 - **Access Control:**
     - **Encryption:** Any user can encrypt if they have access to the key.
