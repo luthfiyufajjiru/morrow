@@ -58,8 +58,8 @@ var CreateAppCmd = &cobra.Command{
 			appArgs = args[2:]
 		}
 
-		if cmd.Flags().Changed("restart") && restartPolicy != app.PolicyNo && restartPolicy != app.PolicyUnlessStopped {
-			log.Fatalf("Error: unknown restart policy %q (use %q or %q)", restartPolicy, app.PolicyNo, app.PolicyUnlessStopped)
+		if cmd.Flags().Changed("restart") && !app.ValidPolicy(restartPolicy) {
+			log.Fatalf("Error: unknown restart policy %q (use %s, %s or %s)", restartPolicy, app.PolicyNo, app.PolicyOnFailure, app.PolicyUnlessStopped)
 		}
 		if err := app.CreateApp(name, execPath, appArgs, workDir); err != nil {
 			log.Fatalf("Error: %v", privilege.Hint(err))
@@ -99,6 +99,16 @@ var DetailAppCmd = &cobra.Command{
 		fmt.Printf("| %-26s | %-40s |\n", "Working Directory", detail.WorkingDir)
 		fmt.Printf("| %-26s | %-40s |\n", "Restart Policy",
 			fmt.Sprintf("%s (max %d, restarted %d)", detail.RestartPolicy, detail.MaxRestarts, detail.RestartCount))
+		if detail.LastExitCode != nil {
+			last := fmt.Sprintf("exit code %d", *detail.LastExitCode)
+			if detail.LastExitSignal != "" {
+				last = "killed by " + detail.LastExitSignal
+			}
+			if detail.LastExitTime != nil {
+				last += " at " + detail.LastExitTime.Format(time.RFC3339)
+			}
+			fmt.Printf("| %-26s | %-40s |\n", "Last Exit", last)
+		}
 		fmt.Printf("| %-26s | %-40s |\n", "Full Command", detail.CommandLine)
 		fmt.Printf("| %-26s | %-40s |\n", "Status", detail.Status)
 		fmt.Printf("| %-26s | %-40d |\n", "PID", detail.PID)
@@ -307,10 +317,10 @@ func init() {
 	LogsAppCmd.Flags().BoolVarP(&followLogs, "follow", "f", false, "Follow log output continuously")
 	for _, c := range []*cobra.Command{CreateAppCmd, UpdateAppCmd} {
 		c.Flags().StringVar(&restartPolicy, "restart", app.PolicyNo,
-			"What to do when the app exits without 'morrow stop': no, or unless-stopped (restart with backoff)")
+			"What to do when the app exits without 'morrow stop': no, on-failure (restart after a non-zero exit or a signal) or unless-stopped (restart after any exit)")
 		c.Flags().IntVar(&maxRestarts, "max-restarts", 5,
-			"With --restart unless-stopped: give up after this many restarts in a row (an app that ran 60s+ resets the count)")
-		_ = c.RegisterFlagCompletionFunc("restart", cobra.FixedCompletions([]string{app.PolicyNo, app.PolicyUnlessStopped}, cobra.ShellCompDirectiveNoFileComp))
+			"With a restart policy: give up after this many restarts in a row (an app that ran 60s+ resets the count)")
+		_ = c.RegisterFlagCompletionFunc("restart", cobra.FixedCompletions([]string{app.PolicyNo, app.PolicyOnFailure, app.PolicyUnlessStopped}, cobra.ShellCompDirectiveNoFileComp))
 	}
 	for _, c := range []*cobra.Command{StopAppCmd, RestartAppCmd} {
 		c.Flags().DurationVar(&stopTimeout, "timeout", app.DefaultStopTimeout,

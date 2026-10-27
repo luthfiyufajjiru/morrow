@@ -9,7 +9,6 @@ import (
 	"morrow/internal/db"
 	"morrow/internal/env"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -37,6 +36,9 @@ type Application struct {
 	MaxRestarts          int               `json:"application_max_restarts"`
 	RestartCount         int               `json:"application_restart_count"`
 	DesiredState         string            `json:"application_desired_state"`
+	LastExitCode         *int              `json:"application_last_exit_code,omitempty"`
+	LastExitSignal       string            `json:"application_last_exit_signal,omitempty"`
+	LastExitTime         *time.Time        `json:"application_last_exit_time,omitempty"`
 }
 
 // GetAppDetail retrieves full information for a named application.
@@ -45,6 +47,8 @@ func GetAppDetail(name string) (*Application, error) {
 	var argsJSON string
 	var creationTimeStr, updateTimeStr, statusTimeStr string
 	var lastRunTimeStr sql.NullString
+	var lastExitCode sql.NullInt64
+	var lastExitTimeStr sql.NullString
 
 	err := db.DB.QueryRow(`
 		SELECT application_id, application_name, application_executable_path, application_arguments,
@@ -52,14 +56,14 @@ func GetAppDetail(name string) (*Application, error) {
 		       application_creation_time, application_update_time,
 		       application_status_time, application_last_run_time,
 		       application_restart_policy, application_max_restarts, application_restart_count,
-		       application_desired_state
+		       application_desired_state, application_last_exit_code, application_last_exit_signal, application_last_exit_time
 		FROM applications WHERE application_name = ?
 	`, name).Scan(
 		&app.ID, &app.Name, &app.ExecutablePath, &argsJSON,
 		&app.WorkingDir, &app.Status, &app.PID, &creationTimeStr, &updateTimeStr,
 		&statusTimeStr, &lastRunTimeStr,
 		&app.RestartPolicy, &app.MaxRestarts, &app.RestartCount,
-		&app.DesiredState,
+		&app.DesiredState, &lastExitCode, &app.LastExitSignal, &lastExitTimeStr,
 	)
 
 	if err != nil {
@@ -92,6 +96,14 @@ func GetAppDetail(name string) (*Application, error) {
 	st, _ := parseTime(statusTimeStr)
 	app.StatusTime = &st
 
+	if lastExitCode.Valid {
+		c := int(lastExitCode.Int64)
+		app.LastExitCode = &c
+	}
+	if lastExitTimeStr.Valid {
+		le, _ := parseTime(lastExitTimeStr.String)
+		app.LastExitTime = &le
+	}
 	if lastRunTimeStr.Valid {
 		lr, _ := parseTime(lastRunTimeStr.String)
 		app.LastRunTime = &lr
@@ -202,16 +214,10 @@ func CreateApp(name string, execPath string, args []string, workDir string) erro
 	return err
 }
 
-// StartApp launches the application and its log relay, and resets the
-// automatic-restart counter.
+// StartApp launches the app under its supervising relay, resets the
+// automatic-restart counter and marks the app as wanted.
 func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 	return startApp(name, inlineEnvs, true)
-}
-
-// Restart is used by the relay to restart a crashed app; it keeps counting
-// restarts so the max-restarts limit applies.
-func Restart(name string) (int, error) {
-	return startApp(name, nil, false)
 }
 
 func startApp(name string, inlineEnvs map[string]string, resetCount bool) (int, error) {
@@ -243,71 +249,7 @@ func startApp(name string, inlineEnvs map[string]string, resetCount bool) (int, 
 		return 0, err
 	}
 
-	// Create a pipe: app stdout/stderr → relay stdin.
-	pipeR, pipeW, err := os.Pipe()
-	if err != nil {
-		return 0, fmt.Errorf("failed to create log pipe: %w", err)
-	}
-	selfExe, err := os.Executable()
-	if err != nil {
-		pipeR.Close()
-		pipeW.Close()
-		return 0, fmt.Errorf("failed to locate morrow executable: %w", err)
-	}
-
-	// Launch the managed app first, writing stdout/stderr into the pipe
-	// (output is buffered until the relay starts reading).
-	cmd := exec.Command(app.ExecutablePath, app.Arguments...)
-	cmd.Dir = app.WorkingDir
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_ID=%s", app.ID))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_NAME=%s", app.Name))
-	for _, e := range envs {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
-	}
-	for k, v := range inlineEnvs {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-	cmd.Stdout = pipeW
-	cmd.Stderr = pipeW
-	detachProcess(cmd)
-	if err := cmd.Start(); err != nil {
-		pipeR.Close()
-		pipeW.Close()
-		return 0, fmt.Errorf("failed to start process: %w", err)
-	}
-	pipeW.Close() // parent's copy of write end is no longer needed
-	pid := cmd.Process.Pid
-
-	// Launch the log relay (morrow _relay <app-name> <app-pid>). Knowing the
-	// PID lets it supervise exactly this instance: every status update it
-	// makes is conditional on that PID, so a stale relay never touches a newer one.
-	relayCmd := exec.Command(selfExe, "_relay", name, strconv.Itoa(pid))
-	relayCmd.Stdin = pipeR
-	detachRelayProcess(relayCmd)
-	if err := relayCmd.Start(); err != nil {
-		pipeR.Close()
-		_ = forceKill(pid)
-		return 0, fmt.Errorf("failed to start log relay: %w", err)
-	}
-	pipeR.Close() // parent's copy of read end is no longer needed
-	_ = os.WriteFile(config.GetRelayPIDFilePath(name), []byte(strconv.Itoa(relayCmd.Process.Pid)), 0644)
-
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	// A start by the user (not an automatic restart) resets the restart
-	// counter and records that the app should be up, including after a reboot.
-	countSQL := ""
-	if resetCount {
-		countSQL = ", application_restart_count = 0, application_desired_state = 'up'"
-	}
-	_, err = db.DB.Exec(`
-		UPDATE applications
-		SET application_status = 'running', application_pid = ?, application_status_time = ?,
-		    application_last_run_time = ?, application_update_time = ?`+countSQL+`
-		WHERE application_name = ?
-	`, pid, now, now, now, name)
-
-	return pid, err
+	return launchSupervisor(name, StartRequest{InlineEnvs: inlineEnvs, UserStart: resetCount})
 }
 
 // StopApp terminates a running application.
@@ -429,6 +371,7 @@ func DeleteApp(name string, force bool) error {
 
 	_, _ = tx.Exec("DELETE FROM application_environment_variables WHERE application_id = ?", app.ID)
 	_, _ = tx.Exec("DELETE FROM grants WHERE application_id = ?", app.ID)
+	_, _ = tx.Exec("DELETE FROM hooks WHERE application_id = ?", app.ID)
 	_, err = tx.Exec("DELETE FROM applications WHERE application_id = ?", app.ID)
 
 	if err != nil {

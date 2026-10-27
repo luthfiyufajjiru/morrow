@@ -84,14 +84,32 @@ sudo morrow update -w "" api /usr/bin/python3 main.py   # -w "" clears the worki
 
 **Stopping.** `morrow stop` sends SIGTERM to the app and its child processes, waits up to 10 seconds for it to exit (`--timeout 30s` to change), then kills it, and returns only once it is gone. `restart` does the same before starting it again, so the old process never overlaps the new one. On Windows, console apps cannot be asked to exit, so they are terminated right away.
 
-**Crashes.** By default an app that exits without `morrow stop` is shown as `exited` and stays down. To have Morrow restart it, set a restart policy:
+**Crashes.** Each app runs as the child of a small supervisor (its log relay), which sees the real exit code, or the signal that killed it. `morrow detail` shows it as **Last Exit**. What happens next is the app's restart policy:
+
+| `--restart` | When the app exits without `morrow stop` |
+| --- | --- |
+| `no` (default) | it is recorded as `exited` and stays down |
+| `on-failure` | it is restarted after a non-zero exit code or a signal; exit code 0 means "done" |
+| `unless-stopped` | it is restarted after any exit |
 
 ```bash
-sudo morrow create --restart unless-stopped api /srv/api/server     # or: sudo morrow update --restart unless-stopped ...
-sudo morrow update --max-restarts 10 api /srv/api/server            # default 5
+sudo morrow create --restart on-failure api /srv/api/server     # or: sudo morrow update --restart on-failure ...
+sudo morrow update --max-restarts 10 api /srv/api/server        # default 5
 ```
 
-With `unless-stopped`, the app's log relay restarts it after 1s, 2s, 4s, ... (at most a minute), and gives up after `--max-restarts` restarts in a row; an app that ran for at least a minute before exiting starts counting from zero again. While it waits the status is `restarting`, and `morrow stop` cancels the restart. Every decision is written to the app's log (`[morrow] exited unexpectedly after 3s; restarting in 2s (attempt 2/5)`), and `morrow detail` shows the policy and restart count. One-off `start -e` variables are not reused by automatic restarts.
+Restarts wait 1s, 2s, 4s, ... (at most a minute) and give up after `--max-restarts` restarts in a row; an app that ran for at least a minute before exiting starts counting from zero again. While it waits the status is `restarting`, and `morrow stop` cancels the restart. Each restart re-reads the app's variables, so a rotated secret takes effect, and keeps the `start -e` values. Every decision is written to the app's log, e.g. `[morrow] exited unexpectedly after 3s (exit code 1); restarting in 2s (attempt 2/5)`.
+
+**Alerts.** Hooks run a command or call a webhook when an app exits unexpectedly:
+
+```bash
+sudo morrow hook add api --on crash,giveup --webhook https://hooks.slack.com/services/T000/B000/XXXX
+sudo morrow hook add api --on giveup --exec 'logger -t morrow "$MORROW_APP_NAME gave up (exit $MORROW_EXIT_CODE)"'
+morrow hook list api              # targets are shown only to administrators
+sudo morrow hook test api <id>    # fire it now with a sample event
+sudo morrow hook remove api <id>
+```
+
+Events: `crash` (non-zero exit or a signal), `exit` (exit code 0), `giveup` (the restart policy stopped). Commands get `MORROW_EVENT`, `MORROW_APP_NAME`, `MORROW_EXIT_CODE`, `MORROW_EXIT_SIGNAL`, `MORROW_RESTART_COUNT`, `MORROW_EVENT_TIME` and `MORROW_HOST`; webhooks receive the same fields as a JSON POST. Hooks run as the supervisor (root/Administrator on a system install) with a timeout, and are stored encrypted with the master key, since commands and URLs often hold tokens. The app's log records whether each hook ran, naming only the webhook's host.
 
 **Reboots.** Run this once on a server:
 
@@ -254,6 +272,8 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 **Do I need sudo for everything?** On a system install, for anything that changes state or reveals a secret. Reading status does not need it. In per-user mode you never need it.
 
 **Can a regular user see my secrets?** No. They see `****`. The key is readable only by root/Administrators, and the CI permission tests try to read it, copy the database, plant files and use their own key; all of that fails.
+
+**Can Morrow tell me when an app crashes?** Yes: `morrow hook add` runs a command or calls a webhook (Slack, PagerDuty, your own endpoint) on `crash`, `exit` or `giveup`. See [section 2](#2-run-your-first-app).
 
 **Can my CI/CD pipeline set secrets without being admin?** Yes, with the inbox (section 5). It can only set the variables you granted, in the format you chose, and cannot read any secret, including the ones it submitted.
 

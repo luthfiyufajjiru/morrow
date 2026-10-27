@@ -1,32 +1,35 @@
 package relay
 
 import (
+	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"morrow/internal/app"
 	"morrow/internal/config"
 	"morrow/internal/db"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// RelayCmd is an internal hidden command launched as a sidecar by "morrow start".
-// It pipes the managed app's stdout/stderr into a rotating log file. When the
-// pipe closes (the app exited), it records a requested stop, or applies the
-// app's restart policy to an unexpected exit.
+// RelayCmd is the hidden supervisor launched by "morrow start". It starts the
+// app as its own child, writes the app's output to a rotating log file, and
+// when the app exits records the exit code, applies the restart policy and
+// runs alert hooks. It reports the first start on stdout to `morrow start`.
 var RelayCmd = &cobra.Command{
-	Use:    "_relay [app-name] [app-pid]",
+	Use:    "_relay [app-name]",
 	Hidden: true,
-	Args:   cobra.RangeArgs(1, 2),
+	Args:   cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		appName := args[0]
-		started := time.Now()
+		var req app.StartRequest
+		if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
+			fmt.Println("error invalid start request:", err)
+			return
+		}
+		os.Stdin.Close()
 
 		logger := &lumberjack.Logger{
 			Filename:   config.GetLogFilePath(appName),
@@ -35,40 +38,21 @@ var RelayCmd = &cobra.Command{
 			MaxAge:     28,   // days
 			Compress:   true, // gzip rotated files
 		}
-
-		// Block until the pipe write-end closes (app has exited or been killed).
-		_, _ = io.Copy(logger, os.Stdin)
-		logf := func(line string) {
-			_, _ = fmt.Fprintf(logger, "%s %s\n", time.Now().UTC().Format("2006-01-02T15:04:05Z"), line)
-		}
 		defer logger.Close()
-		// After an automatic restart the file names the new relay; leave it alone.
 		defer removeOwnPIDFile(config.GetRelayPIDFilePath(appName))
 
 		if err := db.InitDB(config.GetDBPath()); err != nil {
-			log.Printf("relay: cannot open database for %s: %v", appName, err)
+			fmt.Println("error cannot open database:", err)
 			return
 		}
 		defer db.DB.Close()
 
-		pid := 0
-		if len(args) == 2 {
-			pid, _ = strconv.Atoi(args[1])
-		}
-		if pid <= 0 {
-			// Relays started by an older morrow do not know the PID: only record the stop.
-			_, _ = db.DB.Exec(`UPDATE applications SET application_status = 'stopped', application_pid = 0
-				WHERE application_name = ? AND application_status IN ('running', 'stopping')`, appName)
-			return
-		}
-		if err := app.HandleExit(appName, pid, time.Since(started), logf); err != nil {
-			logf(fmt.Sprintf("[morrow] failed to record the exit: %v", err))
-		}
+		_ = app.Supervise(appName, req, os.Stdout, logger)
 	},
 }
 
 // removeOwnPIDFile deletes the relay PID file only if it still holds this
-// process's PID.
+// process's PID (a newer relay may have replaced it).
 func removeOwnPIDFile(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // signalGroup signals the app's process group (apps are started with
@@ -73,4 +75,12 @@ func detachRelayProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true,
 	}
+}
+
+// exitSignal names the signal that killed the process, if any.
+func exitSignal(ps *os.ProcessState) string {
+	if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return unix.SignalName(ws.Signal())
+	}
+	return ""
 }
