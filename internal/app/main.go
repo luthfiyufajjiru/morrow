@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"morrow/internal/config"
 	"morrow/internal/db"
@@ -123,6 +124,9 @@ func GetAppDetail(name string) (*Application, error) {
 
 const maskedValue = "****"
 
+// ErrNotRunning is returned by StopApp for an app that is not running.
+var ErrNotRunning = errors.New("is not running")
+
 // reconcileStatus treats a "running" app whose PID no longer exists (crash
 // without relay, reboot, killed relay) as stopped, and persists that so later
 // commands never signal a PID the OS may have reused. The write is best
@@ -212,6 +216,14 @@ func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 		}
 	}
 
+	// Make sure the status update at the end can succeed before spawning
+	// anything; otherwise a caller without write access would leave an
+	// untracked relay and app running. The no-op UPDATE still needs a write
+	// lock, so a read-only database fails here.
+	if _, err := db.DB.Exec(`UPDATE applications SET application_update_time = application_update_time WHERE application_name = ?`, name); err != nil {
+		return 0, err
+	}
+
 	// Create a pipe: app stdout/stderr → relay stdin.
 	pipeR, pipeW, err := os.Pipe()
 	if err != nil {
@@ -285,7 +297,7 @@ func StopApp(name string) error {
 	}
 
 	if app.Status != "running" || app.PID == 0 {
-		return fmt.Errorf("application %s is not running", name)
+		return fmt.Errorf("application %s %w", name, ErrNotRunning)
 	}
 
 	// Call platform-specific termination logic. A failure while the process is
@@ -314,9 +326,13 @@ func StopApp(name string) error {
 	return err
 }
 
-// RestartApp stops and then starts an application.
+// RestartApp stops and then starts an application. An app that is not running
+// is simply started; any other stop failure (e.g. missing permissions) is
+// returned instead of being masked by a later "already running" error.
 func RestartApp(name string) (int, error) {
-	_ = StopApp(name)
+	if err := StopApp(name); err != nil && !errors.Is(err, ErrNotRunning) {
+		return 0, err
+	}
 	return StartApp(name, nil)
 }
 
