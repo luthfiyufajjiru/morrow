@@ -225,3 +225,6 @@ try {
 finally {
     Cleanup
 }
+# Cleanup's native commands may leave a non-zero $LASTEXITCODE (e.g. deleting a
+# group that uninstall already removed); failures exit 1 inside the try block.
+exit 0
