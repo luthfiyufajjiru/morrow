@@ -102,12 +102,14 @@ jobs:
       matrix:
         include:
           # Same targets as the Makefile.
-          - { goos: windows, goarch: amd64 }
-          - { goos: windows, goarch: "386" }
-          - { goos: windows, goarch: arm64 }
-          - { goos: linux, goarch: amd64 }
-          - { goos: linux, goarch: arm64 }
-          - { goos: linux, goarch: arm, goarm: "7" }
+          # `artifact` is the Makefile's file name suffix; verifydist checks
+          # the binary really targets it.
+          - { goos: windows, goarch: amd64, artifact: windows-x64.exe }
+          - { goos: windows, goarch: "386", artifact: windows-x86.exe }
+          - { goos: windows, goarch: arm64, artifact: windows-arm64.exe }
+          - { goos: linux, goarch: amd64, artifact: linux-amd64 }
+          - { goos: linux, goarch: arm64, artifact: linux-arm64 }
+          - { goos: linux, goarch: arm, goarm: "7", artifact: linux-arm }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -119,4 +121,6 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
-        run: go build -o /dev/null .
+        run: go build -o "dist/ci/morrow-vci_${{ matrix.artifact }}" .
+      - name: verify artifact format
+        run: go run ./script/verifydist dist/ci
