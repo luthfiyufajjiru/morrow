@@ -6,11 +6,27 @@ import (
 	"fmt"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
-// terminateProcess on Windows uses taskkill to ensure the process
-// and all its sub-processes (/T) are forcefully (/F) stopped.
-func terminateProcess(pid int) error {
+// gracefulStop first asks the app and its children (/T) to close and waits up
+// to timeout. Console apps without a window cannot be asked; taskkill refuses
+// at once, and the tree is then terminated forcefully (/F).
+func gracefulStop(pid int, timeout time.Duration) error {
+	if exec.Command("taskkill", "/T", "/PID", fmt.Sprintf("%d", pid)).Run() == nil && waitExit(pid, timeout) {
+		return nil
+	}
+	if err := exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run(); err != nil && isProcessAlive(pid) {
+		return err
+	}
+	if waitExit(pid, killWait) {
+		return nil
+	}
+	return fmt.Errorf("process %d is still running after a forced kill", pid)
+}
+
+// forceKill terminates a process and its children immediately.
+func forceKill(pid int) error {
 	return exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
 }
 

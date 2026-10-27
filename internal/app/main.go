@@ -33,6 +33,9 @@ type Application struct {
 	StatusTime           *time.Time        `json:"application_status_time,omitempty"`
 	LastRunTime          *time.Time        `json:"application_last_run_time,omitempty"`
 	CommandLine          string            `json:"application_command_line"`
+	RestartPolicy        string            `json:"application_restart_policy"`
+	MaxRestarts          int               `json:"application_max_restarts"`
+	RestartCount         int               `json:"application_restart_count"`
 }
 
 // GetAppDetail retrieves full information for a named application.
@@ -46,12 +49,14 @@ func GetAppDetail(name string) (*Application, error) {
 		SELECT application_id, application_name, application_executable_path, application_arguments,
 		       application_working_directory, application_status, application_pid,
 		       application_creation_time, application_update_time,
-		       application_status_time, application_last_run_time
+		       application_status_time, application_last_run_time,
+		       application_restart_policy, application_max_restarts, application_restart_count
 		FROM applications WHERE application_name = ?
 	`, name).Scan(
 		&app.ID, &app.Name, &app.ExecutablePath, &argsJSON,
 		&app.WorkingDir, &app.Status, &app.PID, &creationTimeStr, &updateTimeStr,
 		&statusTimeStr, &lastRunTimeStr,
+		&app.RestartPolicy, &app.MaxRestarts, &app.RestartCount,
 	)
 
 	if err != nil {
@@ -132,7 +137,7 @@ var ErrNotRunning = errors.New("is not running")
 // commands never signal a PID the OS may have reused. The write is best
 // effort: callers without write access still get the corrected view.
 func reconcileStatus(name string, status string, pid int) (string, int) {
-	if status != "running" || isProcessAlive(pid) {
+	if (status != "running" && status != "stopping") || isProcessAlive(pid) {
 		return status, pid
 	}
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -140,8 +145,8 @@ func reconcileStatus(name string, status string, pid int) (string, int) {
 		UPDATE applications
 		SET application_status = 'stopped', application_pid = 0,
 		    application_status_time = ?, application_update_time = ?
-		WHERE application_name = ? AND application_status = 'running' AND application_pid = ?
-	`, now, now, name, pid)
+		WHERE application_name = ? AND application_status = ? AND application_pid = ?
+	`, now, now, name, status, pid)
 	return "stopped", 0
 }
 
@@ -194,8 +199,19 @@ func CreateApp(name string, execPath string, args []string, workDir string) erro
 	return err
 }
 
-// StartApp launches the application and a log relay sidecar.
+// StartApp launches the application and its log relay, and resets the
+// automatic-restart counter.
 func StartApp(name string, inlineEnvs map[string]string) (int, error) {
+	return startApp(name, inlineEnvs, true)
+}
+
+// Restart is used by the relay to restart a crashed app; it keeps counting
+// restarts so the max-restarts limit applies.
+func Restart(name string) (int, error) {
+	return startApp(name, nil, false)
+}
+
+func startApp(name string, inlineEnvs map[string]string, resetCount bool) (int, error) {
 	app, err := GetAppDetail(name)
 	if err != nil {
 		return 0, err
@@ -229,60 +245,60 @@ func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to create log pipe: %w", err)
 	}
-
-	// Launch the log relay sidecar (morrow _relay <app-name>).
 	selfExe, err := os.Executable()
 	if err != nil {
-		return 0, fmt.Errorf("failed to locate morrow executable: %w", err)
-	}
-	relayCmd := exec.Command(selfExe, "_relay", name)
-	relayCmd.Stdin = pipeR
-	detachRelayProcess(relayCmd)
-	if err := relayCmd.Start(); err != nil {
 		pipeR.Close()
 		pipeW.Close()
-		return 0, fmt.Errorf("failed to start log relay: %w", err)
+		return 0, fmt.Errorf("failed to locate morrow executable: %w", err)
 	}
-	relayPID := relayCmd.Process.Pid
-	pipeR.Close() // parent's copy of read end is no longer needed
 
-	// Save relay PID so StopApp can kill it later.
-	relayPIDFile := config.GetRelayPIDFilePath(name)
-	_ = os.WriteFile(relayPIDFile, []byte(strconv.Itoa(relayPID)), 0644)
-
-	// Launch the managed app, writing stdout/stderr into the pipe.
+	// Launch the managed app first, writing stdout/stderr into the pipe
+	// (output is buffered until the relay starts reading).
 	cmd := exec.Command(app.ExecutablePath, app.Arguments...)
 	cmd.Dir = app.WorkingDir
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_ID=%s", app.ID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_NAME=%s", app.Name))
-
 	for _, e := range envs {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
 	}
 	for k, v := range inlineEnvs {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
-
 	cmd.Stdout = pipeW
 	cmd.Stderr = pipeW
 	detachProcess(cmd)
-
 	if err := cmd.Start(); err != nil {
+		pipeR.Close()
 		pipeW.Close()
-		_ = terminateProcess(relayPID)
-		_ = os.Remove(relayPIDFile)
 		return 0, fmt.Errorf("failed to start process: %w", err)
 	}
 	pipeW.Close() // parent's copy of write end is no longer needed
-
 	pid := cmd.Process.Pid
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
+	// Launch the log relay (morrow _relay <app-name> <app-pid>). Knowing the
+	// PID lets it supervise exactly this instance: every status update it
+	// makes is conditional on that PID, so a stale relay never touches a newer one.
+	relayCmd := exec.Command(selfExe, "_relay", name, strconv.Itoa(pid))
+	relayCmd.Stdin = pipeR
+	detachRelayProcess(relayCmd)
+	if err := relayCmd.Start(); err != nil {
+		pipeR.Close()
+		_ = forceKill(pid)
+		return 0, fmt.Errorf("failed to start log relay: %w", err)
+	}
+	pipeR.Close() // parent's copy of read end is no longer needed
+	_ = os.WriteFile(config.GetRelayPIDFilePath(name), []byte(strconv.Itoa(relayCmd.Process.Pid)), 0644)
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	countSQL := ""
+	if resetCount {
+		countSQL = ", application_restart_count = 0"
+	}
 	_, err = db.DB.Exec(`
 		UPDATE applications
 		SET application_status = 'running', application_pid = ?, application_status_time = ?,
-		    application_last_run_time = ?, application_update_time = ?
+		    application_last_run_time = ?, application_update_time = ?`+countSQL+`
 		WHERE application_name = ?
 	`, pid, now, now, now, name)
 
@@ -291,38 +307,67 @@ func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 
 // StopApp terminates a running application.
 func StopApp(name string) error {
+	return StopAppTimeout(name, DefaultStopTimeout)
+}
+
+// StopAppTimeout asks the app to exit, waits up to timeout, then kills it.
+// It returns once the process is gone and the app is recorded as stopped.
+func StopAppTimeout(name string, timeout time.Duration) error {
 	app, err := GetAppDetail(name)
 	if err != nil {
 		return err
 	}
 
+	// Waiting to be restarted after a crash: cancel the restart.
+	if app.Status == "restarting" {
+		return setStatus(name, "stopped", "application_status = 'restarting'")
+	}
 	if app.Status != "running" || app.PID == 0 {
 		return fmt.Errorf("application %s %w", name, ErrNotRunning)
 	}
 
-	// Call platform-specific termination logic. A failure while the process is
-	// still alive (typically another user's process) must not be recorded as stopped.
-	if err := terminateProcess(app.PID); err != nil && isProcessAlive(app.PID) {
-		return fmt.Errorf("failed to stop process %d: %w", app.PID, err)
+	// Record the intent first so the relay sees a requested stop, not a crash.
+	// This also fails early, before any signal, for a caller without write access.
+	if err := setStatus(name, "stopping", fmt.Sprintf("application_pid = %d", app.PID)); err != nil {
+		return err
+	}
+	if err := gracefulStop(app.PID, timeout); err != nil {
+		if isProcessAlive(app.PID) {
+			_ = setStatus(name, "running", fmt.Sprintf("application_pid = %d", app.PID))
+			return fmt.Errorf("failed to stop process %d: %w", app.PID, err)
+		}
 	}
 
-	// Kill the log relay sidecar if it is still running.
+	// The relay sees the pipe close, records the stop and exits; give it a
+	// moment, then make sure it is gone.
 	relayPIDFile := config.GetRelayPIDFilePath(name)
 	if data, readErr := os.ReadFile(relayPIDFile); readErr == nil {
 		if relayPID, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && relayPID > 0 {
-			_ = terminateProcess(relayPID)
+			if !waitExit(relayPID, 3*time.Second) {
+				_ = forceKill(relayPID)
+			}
 		}
 		_ = os.Remove(relayPIDFile)
 	}
 
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	_, err = db.DB.Exec(`
-		UPDATE applications
-		SET application_status = 'stopped', application_pid = 0,
-		    application_status_time = ?, application_update_time = ?
-		WHERE application_name = ?
-	`, now, now, name)
+	return setStatusPID0(name, "stopped", fmt.Sprintf("application_pid IN (0, %d)", app.PID))
+}
 
+// setStatus updates the status where cond holds (a trusted SQL fragment).
+func setStatus(name, status, cond string) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_, err := db.DB.Exec(`
+		UPDATE applications SET application_status = ?, application_status_time = ?, application_update_time = ?
+		WHERE application_name = ? AND `+cond, status, now, now, name)
+	return err
+}
+
+// setStatusPID0 is setStatus that also clears the PID.
+func setStatusPID0(name, status, cond string) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_, err := db.DB.Exec(`
+		UPDATE applications SET application_status = ?, application_pid = 0, application_status_time = ?, application_update_time = ?
+		WHERE application_name = ? AND `+cond, status, now, now, name)
 	return err
 }
 
@@ -330,7 +375,12 @@ func StopApp(name string) error {
 // is simply started; any other stop failure (e.g. missing permissions) is
 // returned instead of being masked by a later "already running" error.
 func RestartApp(name string) (int, error) {
-	if err := StopApp(name); err != nil && !errors.Is(err, ErrNotRunning) {
+	return RestartAppTimeout(name, DefaultStopTimeout)
+}
+
+// RestartAppTimeout is RestartApp with a custom graceful-stop timeout.
+func RestartAppTimeout(name string, timeout time.Duration) (int, error) {
+	if err := StopAppTimeout(name, timeout); err != nil && !errors.Is(err, ErrNotRunning) {
 		return 0, err
 	}
 	return StartApp(name, nil)

@@ -3,19 +3,49 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
-// terminateProcess on Linux sends a SIGTERM signal to the process
-// for a graceful shutdown.
-func terminateProcess(pid int) error {
+// signalGroup signals the app's process group (apps are started with
+// Setsid, so their PID is the group ID and children are included), falling
+// back to the single process.
+func signalGroup(pid int, sig syscall.Signal) error {
+	if err := syscall.Kill(-pid, sig); err == nil {
+		return nil
+	}
+	return syscall.Kill(pid, sig)
+}
+
+// gracefulStop sends SIGTERM to the app and its children, waits up to
+// timeout for it to exit, then sends SIGKILL.
+func gracefulStop(pid int, timeout time.Duration) error {
+	if err := signalGroup(pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
+		return err
+	}
+	if waitExit(pid, timeout) {
+		return nil
+	}
+	if err := signalGroup(pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+		return err
+	}
+	if waitExit(pid, killWait) {
+		return nil
+	}
+	return fmt.Errorf("process %d is still running after SIGKILL", pid)
+}
+
+// forceKill kills a single process immediately (used for the log relay and
+// to clean up after a failed start).
+func forceKill(pid int) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
-	return proc.Signal(syscall.SIGTERM)
+	return proc.Signal(syscall.SIGKILL)
 }
 
 // isProcessAlive reports whether a process with this PID exists. Signal 0

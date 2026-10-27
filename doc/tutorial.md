@@ -82,7 +82,18 @@ sudo morrow update -w "" api /usr/bin/python3 main.py   # -w "" clears the worki
 
 **Logs.** Each app's stdout and stderr go to `<logs>/<app>.log`, rotated at 10 MB (3 old files kept, gzipped, 28 days). A small relay process per app does this; it also marks the app `stopped` when it exits.
 
-**Crashes and reboots.** Morrow does not restart crashed apps or start apps at boot yet. If an app died, `morrow list` shows it as `stopped` (Morrow checks whether the recorded PID is still alive), and `sudo morrow start api` starts it again.
+**Stopping.** `morrow stop` sends SIGTERM to the app and its child processes, waits up to 10 seconds for it to exit (`--timeout 30s` to change), then kills it, and returns only once it is gone. `restart` does the same before starting it again, so the old process never overlaps the new one. On Windows, console apps cannot be asked to exit, so they are terminated right away.
+
+**Crashes.** By default an app that exits without `morrow stop` is shown as `exited` and stays down. To have Morrow restart it, set a restart policy:
+
+```bash
+sudo morrow create --restart unless-stopped api /srv/api/server     # or: sudo morrow update --restart unless-stopped ...
+sudo morrow update --max-restarts 10 api /srv/api/server            # default 5
+```
+
+With `unless-stopped`, the app's log relay restarts it after 1s, 2s, 4s, ... (at most a minute), and gives up after `--max-restarts` restarts in a row; an app that ran for at least a minute before exiting starts counting from zero again. While it waits the status is `restarting`, and `morrow stop` cancels the restart. Every decision is written to the app's log (`[morrow] exited unexpectedly after 3s; restarting in 2s (attempt 2/5)`), and `morrow detail` shows the policy and restart count. One-off `start -e` variables are not reused by automatic restarts.
+
+**Reboots.** Morrow does not start apps at boot yet. After a reboot, `morrow list` shows them as `stopped`; start them again with `sudo morrow start`.
 
 ## 3. Environment variables and secrets
 
@@ -227,7 +238,7 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 
 ## 10. FAQ
 
-**Is Morrow like PM2?** It has PM2-style commands but no resident daemon and no Node.js. It is a single Go binary; each command runs and exits, and only a small log relay per app keeps running. It does not (yet) auto-restart crashed apps, start apps at boot, or run in cluster mode.
+**Is Morrow like PM2?** It has PM2-style commands but no resident daemon and no Node.js. It is a single Go binary; each command runs and exits, and only a small log relay per app keeps running. With `--restart unless-stopped` its log relay restarts crashed apps with backoff. It does not (yet) start apps at boot or run in cluster mode.
 
 **Do I need sudo for everything?** On a system install, for anything that changes state or reveals a secret. Reading status does not need it. In per-user mode you never need it.
 
