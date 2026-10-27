@@ -288,8 +288,11 @@ func StopApp(name string) error {
 		return fmt.Errorf("application %s is not running", name)
 	}
 
-	// Call platform-specific termination logic
-	_ = terminateProcess(app.PID)
+	// Call platform-specific termination logic. A failure while the process is
+	// still alive (typically another user's process) must not be recorded as stopped.
+	if err := terminateProcess(app.PID); err != nil && isProcessAlive(app.PID) {
+		return fmt.Errorf("failed to stop process %d: %w", app.PID, err)
+	}
 
 	// Kill the log relay sidecar if it is still running.
 	relayPIDFile := config.GetRelayPIDFilePath(name)

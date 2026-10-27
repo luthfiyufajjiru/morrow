@@ -5,6 +5,7 @@ import (
 	"log"
 	"morrow/internal/config"
 	"morrow/internal/db"
+	"morrow/internal/privilege"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -30,12 +31,12 @@ var RootCmd = &cobra.Command{
 		}
 
 		if err := db.InitDB(config.GetDBPath()); err != nil {
-			log.Fatalf("failed to open db: %v", err)
+			log.Fatalf("failed to open db: %v", privilege.Hint(err))
 		}
 
 		// Apply pending migrations so upgraded binaries work against older databases.
 		if err := db.EnsureSchemaEmbedded(); err != nil {
-			log.Fatalf("failed to migrate db: %v", err)
+			log.Fatalf("failed to migrate db: %v", privilege.Hint(err))
 		}
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {

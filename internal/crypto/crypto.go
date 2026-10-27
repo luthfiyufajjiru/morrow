@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"morrow/internal/config"
+	"morrow/internal/privilege"
 	"os"
 )
 
@@ -23,9 +24,13 @@ func getMasterKey() ([]byte, error) {
 	return key, nil
 }
 
+// InitMasterKey creates the master key if needed and (re)applies its access
+// restrictions, so re-running init also repairs keys from older installs.
 func InitMasterKey() error {
-	_, err := ensureMasterKey()
-	return err
+	if _, err := ensureMasterKey(); err != nil {
+		return err
+	}
+	return privilege.RestrictKeyFile(config.GetKeyPath(), config.IsPerUser())
 }
 
 func ensureMasterKey() ([]byte, error) {
@@ -43,6 +48,10 @@ func ensureMasterKey() ([]byte, error) {
 
 		if err := os.WriteFile(config.GetKeyPath(), key, 0600); err != nil {
 			return nil, fmt.Errorf("failed to save master key to %s: %w", config.GetKeyPath(), err)
+		}
+		if err := privilege.RestrictKeyFile(config.GetKeyPath(), config.IsPerUser()); err != nil {
+			_ = os.Remove(config.GetKeyPath())
+			return nil, err
 		}
 		return key, nil
 	}

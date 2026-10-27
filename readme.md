@@ -40,10 +40,22 @@ make all
 ```
 
 ### 2. Initialization
-Morrow requires an initial setup to create its database and encryption keys:
+Morrow requires an initial setup to create its database and encryption keys.
+
+**System install** (data next to the binary, e.g. `/usr/local/bin` or `C:\Program Files\Morrow`) must be initialized elevated, so the database and key are owned by root/Administrators:
 ```bash
-./morrow init
+sudo morrow init        # Linux/macOS
+morrow init             # Windows: from an Administrator terminal
 ```
+Afterwards, regular users can still run read-only commands (`list`, `status`, `detail`, `list-env`), while changes (`create`, `start`, `stop`, `set-env`, ...) and secured values require sudo/Administrator.
+
+**Per-user install** needs no elevation: point `MORROW_HOME` at a directory you own.
+```bash
+export MORROW_HOME="$HOME/.morrow"
+morrow init
+```
+
+Re-running `init` on an existing install is safe: it keeps the key and re-applies its access restrictions.
 
 ### 3. Basic Usage
 ![morrow quick start: init, create with a working directory, start, list and logs](doc/assets/quickstart.gif)
@@ -198,7 +210,7 @@ This ensures high availability and reliable log capture without requiring a heav
 
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 
-- **Access follows the key file**: secured values are encrypted with the master key (`.morrow.key` next to the binary, or `MORROW_KEY_PATH`). Whoever can read that file can decrypt them — no root/admin check is involved.
+- **Access follows the key file**: secured values are encrypted with the master key (`.morrow.key` next to the binary, or `MORROW_KEY_PATH`). Whoever can read that file can decrypt them. `init` restricts it to its owner (`0600` on Linux/macOS; on Windows an explicit ACL for SYSTEM + Administrators, or only the current user in per-user mode), so in a system install only root/Administrators can read secured values.
 - **Censorship**: `detail` (table and `--json`, including the Full Command) always shows secured values as `****`. `list-env` shows them as `****` when the key is not readable; `get-env` and `start` fail with a clear error in that case.
 - **Mixed Bulk Support**: You can override the default security setting per variable by suffixing the key:
     - `key:s=value` -> Force Secured (encrypted)

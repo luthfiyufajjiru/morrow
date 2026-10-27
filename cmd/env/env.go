@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"morrow/internal/env"
+	"morrow/internal/privilege"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -38,7 +39,7 @@ var SetEnvCmd = &cobra.Command{
 			}
 
 			if err := env.SetEnv(appName, key, val, isSecuredArg); err != nil {
-				log.Fatalf("Error: %v", err)
+				log.Fatalf("Error: %v", privilege.Hint(err))
 			}
 
 			currentStatus := "unsecured"
@@ -57,7 +58,7 @@ var GetEnvCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		val, isSecured, err := env.GetEnv(args[0], args[1])
 		if err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		status := ""
 		if isSecured {
@@ -73,7 +74,7 @@ var DelEnvCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := env.DelEnv(args[0], args[1]); err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Successfully deleted %s for application %s\n", args[1], args[0])
 	},
@@ -86,7 +87,7 @@ var ListEnvCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		envs, err := env.ListEnv(args[0])
 		if err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Environment variables for %s:\n", args[0])
 		for _, e := range envs {

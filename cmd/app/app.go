@@ -2,11 +2,13 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"morrow/internal/app"
 	"morrow/internal/config"
+	"morrow/internal/privilege"
 	"os"
 	"strings"
 	"time"
@@ -33,7 +35,7 @@ var CreateAppCmd = &cobra.Command{
 		}
 
 		if err := app.CreateApp(name, execPath, appArgs, workDir); err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Successfully created application %s\n", name)
 	},
@@ -47,7 +49,7 @@ var DetailAppCmd = &cobra.Command{
 		name := args[0]
 		detail, err := app.GetAppDetail(name)
 		if err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 
 		if jsonOutput {
@@ -96,7 +98,7 @@ var StartAppCmd = &cobra.Command{
 
 		pid, err := app.StartApp(name, envs)
 		if err != nil {
-			log.Fatalf("Error starting app %s: %v", name, err)
+			log.Fatalf("Error starting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully started application %s with PID %d\n", name, pid)
 	},
@@ -109,7 +111,7 @@ var StopAppCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 		if err := app.StopApp(name); err != nil {
-			log.Fatalf("Error stopping app %s: %v", name, err)
+			log.Fatalf("Error stopping app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully stopped application %s\n", name)
 	},
@@ -123,7 +125,7 @@ var RestartAppCmd = &cobra.Command{
 		name := args[0]
 		pid, err := app.RestartApp(name)
 		if err != nil {
-			log.Fatalf("Error restarting app %s: %v", name, err)
+			log.Fatalf("Error restarting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully restarted application %s with PID %d\n", name, pid)
 	},
@@ -136,7 +138,7 @@ var DeleteAppCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 		if err := app.DeleteApp(name, forceDelete); err != nil {
-			log.Fatalf("Error deleting app %s: %v", name, err)
+			log.Fatalf("Error deleting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully deleted application %s\n", name)
 	},
@@ -148,7 +150,7 @@ var ListAppsCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		apps, err := app.ListApps()
 		if err != nil {
-			log.Fatalf("Error listing apps: %v", err)
+			log.Fatalf("Error listing apps: %v", privilege.Hint(err))
 		}
 		if len(apps) == 0 {
 			fmt.Println("No applications managed by Morrow.")
@@ -171,7 +173,7 @@ var StatusAppCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		status, pid, err := app.GetAppStatus(args[0])
 		if err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Application: %s\nStatus: %s\nPID: %d\n", args[0], status, pid)
 	},
@@ -193,7 +195,7 @@ var UpdateAppCmd = &cobra.Command{
 			dir = &workDir
 		}
 		if err := app.UpdateApp(name, execPath, appArgs, dir); err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Successfully updated application %s\n", name)
 	},
@@ -211,8 +213,11 @@ var LogsAppCmd = &cobra.Command{
 		logPath := config.GetLogFilePath(appName)
 
 		data, err := os.ReadFile(logPath)
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			log.Fatalf("No logs found for %s (has it been started?)", appName)
+		}
+		if err != nil {
+			log.Fatalf("Error reading logs: %v", privilege.Hint(err))
 		}
 
 		// Split in memory: unlike bufio.Scanner this has no per-line length limit.
@@ -244,7 +249,7 @@ var LogsAppCmd = &cobra.Command{
 				Logger:    tail.DiscardingLogger,
 			})
 			if err != nil {
-				log.Fatalf("Failed to follow logs: %v", err)
+				log.Fatalf("Failed to follow logs: %v", privilege.Hint(err))
 			}
 			for line := range t.Lines {
 				fmt.Println(line.Text)
