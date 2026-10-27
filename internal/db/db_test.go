@@ -1,12 +1,16 @@
 package db
 
 import (
+	"context"
+	"database/sql"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setupDB(t *testing.T) {
@@ -94,5 +98,41 @@ func TestWorkingDirectoryDefault(t *testing.T) {
 	}
 	if wd != "" {
 		t.Errorf("default working dir = %q, want empty", wd)
+	}
+}
+
+// A writer must wait for another connection's write lock instead of failing
+// immediately with SQLITE_BUSY (relay and `morrow stop` updating together).
+func TestBusyTimeout(t *testing.T) {
+	setupDB(t)
+	if err := EnsureSchemaEmbedded(); err != nil {
+		t.Fatal(err)
+	}
+	var timeout int
+	if err := DB.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != busyTimeoutMs {
+		t.Fatalf("busy_timeout = %d, %v; want %d", timeout, err, busyTimeoutMs)
+	}
+
+	path := filepath.Join(os.Getenv("MORROW_HOME"), "morrow.db")
+	other, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	conn, err := other.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = conn.ExecContext(context.Background(), "COMMIT")
+	}()
+	if _, err := DB.Exec(`INSERT INTO applications (application_id, application_name, application_executable_path, application_arguments)
+		VALUES ('id-busy', 'busy', 'x', '[]')`); err != nil {
+		t.Fatalf("write while another connection held the lock: %v", err)
 	}
 }
