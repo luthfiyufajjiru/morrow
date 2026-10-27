@@ -15,13 +15,18 @@ U="${1:-}"; MORROW_SRC="${2:-}"; DEMO_SRC="${3:-}"
 for d in /etc/morrow /var/lib/morrow /var/log/morrow; do
   [ -e "$d" ] && { echo "refusing: $d already exists"; exit 2; }
 done
+getent group morrow-deploy >/dev/null && { echo "refusing: group morrow-deploy already exists"; exit 2; }
 
 BIN=/opt/morrow-e2e
-SECRET="e2e-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+rand() { head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+SECRET="e2e-$(rand)"
+# The value the deployer submits through the inbox; it must never be readable either.
+NEWSECRET="e2einbox$(rand)"
 cleanup() {
   "$BIN/morrow" stop api >/dev/null 2>&1
   pkill -f "$BIN/demo-api" 2>/dev/null
-  rm -rf /etc/morrow /var/lib/morrow /var/log/morrow "$BIN" /tmp/morrow-e2e-user
+  rm -rf /etc/morrow /var/lib/morrow /var/log/morrow "$BIN" /tmp/morrow-e2e-user /tmp/morrow-e2e-link
+  groupdel morrow-deploy 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -29,19 +34,22 @@ trap cleanup EXIT
 mkdir -p "$BIN/api" && cp "$MORROW_SRC" "$BIN/morrow" && cp "$DEMO_SRC" "$BIN/demo-api" && chmod 755 "$BIN" "$BIN/morrow" "$BIN/demo-api"
 printf '{}\n' > "$BIN/api/config.json"
 M="$BIN/morrow"
-{ $M init && $M create -w "$BIN/api" api "$BIN/demo-api" && $M create -w "$BIN/api" idle "$BIN/demo-api" \
-  && $M set-env api "API_TOKEN:s=$SECRET" PLAIN=visible && $M start api; } >/dev/null || { echo "root setup failed"; exit 1; }
+{ $M init --enable-inbox --inbox-hook=false && $M create -w "$BIN/api" api "$BIN/demo-api" && $M create -w "$BIN/api" idle "$BIN/demo-api" \
+  && $M set-env api "API_TOKEN:s=$SECRET" PLAIN=visible && $M start api \
+  && usermod -aG morrow-deploy "$U" && $M grant "$U" --app api --vars API_TOKEN \
+  && $M grant nobody --app api --vars API_TOKEN; } >/dev/null || { echo "root setup failed"; exit 1; }
 sleep 1
-echo "layout after 'sudo morrow init':"
-ls -ld /etc/morrow /etc/morrow/.morrow.key /var/lib/morrow /var/lib/morrow/morrow.db /var/log/morrow | awk '{print "  "$1, $3":"$4, $NF}'
+echo "layout after 'sudo morrow init --enable-inbox':"
+ls -ld /etc/morrow /etc/morrow/.morrow.key /etc/morrow/.morrow-inbox.key /var/lib/morrow /var/lib/morrow/morrow.db \
+  /var/lib/morrow/inbox.pub /var/lib/morrow/inbox /var/log/morrow | awk '{print "  "$1, $3":"$4, $NF}'
 
 pass=0; fail=0
 # check <ok|deny> <name> <command run as $U> [pattern the output must match]
-# The secret must never appear in the output of any row.
+# Neither secret may ever appear in the output of any row.
 check() {
   out=$(su "$U" -s /bin/sh -c "$3" 2>&1); code=$?
   ok=1
-  echo "$out" | grep -q -- "$SECRET" && ok=0
+  echo "$out" | grep -q -e "$SECRET" -e "$NEWSECRET" && ok=0
   if [ "$1" = ok ]; then [ $code -eq 0 ] || ok=0; else [ $code -ne 0 ] || ok=0; fi
   [ -n "${4:-}" ] && { echo "$out" | grep -q -- "$4" || ok=0; }
   if [ $ok = 1 ]; then pass=$((pass+1)); r=PASS; else fail=$((fail+1)); r=FAIL; fi
@@ -87,5 +95,39 @@ if $M status api | grep -q running && $M get-env api API_TOKEN | grep -q -- "$SE
 else
   fail=$((fail+1)); echo "FAIL  system state changed"; $M list; $M list-env api
 fi
+
+# --- Write-only secrets through the inbox -------------------------------------
+INBOX=/var/lib/morrow/inbox
+echo; echo "inbox, as $U (member of morrow-deploy, granted API_TOKEN of api):"
+check ok   "submit granted secret (from own env)"  "API_TOKEN=$NEWSECRET $M submit-env api API_TOKEN --restart" "Submitted 1"
+check deny "list the inbox"                        "ls $INBOX"
+check deny "read submissions back"                 "cat $INBOX/*"
+check deny "read inbox private key"                "cat /etc/morrow/.morrow-inbox.key"
+check deny "submit a variable not granted"         "$M submit-env api DB_PASS=abcdefgh12345678" "no grant"
+check deny "submit a denied name"                  "$M submit-env api LD_PRELOAD=/tmp/x.so" "cannot be granted"
+check deny "submit a value outside the format"     "$M submit-env api 'API_TOKEN=\$(id)'" "token format"
+check deny "submit for another app"                "$M submit-env idle API_TOKEN=abcdefgh12345678" "no grant"
+check deny "apply as non-root"                     "$M apply" "$HINT"
+check ok   "plant a junk file (apply must reject)" "printf junk > $INBOX/0123456789abcdef0123456789abcdef.sealed"
+# Two names for one file (link count 2); apply must reject both.
+check ok   "plant hard links (apply must reject)"  "printf x > $INBOX/fedcba9876543210fedcba9876543210.sealed && ln $INBOX/fedcba9876543210fedcba9876543210.sealed $INBOX/00112233445566778899aabbccddeeff.sealed"
+# nobody holds a grant but is not in morrow-deploy, so the inbox itself must refuse it.
+out=$(su nobody -s /bin/sh -c "API_TOKEN=abcdefgh12345678 $M submit-env api API_TOKEN" 2>&1); code=$?
+if [ $code -ne 0 ] && echo "$out" | grep -q "morrow-deploy"; then pass=$((pass+1)); r=PASS; else fail=$((fail+1)); r=FAIL; fi
+printf '%s  %-4s %-40s %s\n' "$r" deny "granted non-member cannot write inbox" "$(echo "$out" | tail -1 | cut -c1-100)"
+
+echo; echo "as root: morrow apply"
+applied=$($M apply 2>&1); echo "  $applied" | head -3
+if echo "$applied" | grep -q "Applied 1, rejected 3" && $M get-env api API_TOKEN | grep -q -- "$NEWSECRET" \
+   && $M status api | grep -q running && [ -z "$(ls -A $INBOX)" ]; then
+  pass=$((pass+1)); echo "PASS  submission applied, junk and hard links rejected, app restarted, inbox emptied"
+else
+  fail=$((fail+1)); echo "FAIL  apply result unexpected"; $M inbox
+fi
+
+echo; echo "as $U after apply:"
+check deny "read the applied secret"               "$M get-env api API_TOKEN" "$HINT"
+check ok   "see outcomes in 'morrow inbox'"        "$M inbox" "applied"
+check ok   "outcomes show rejections, no values"   "$M inbox" "rejected"
 echo; echo "result: $pass passed, $fail failed"
 [ $fail -eq 0 ]

@@ -22,15 +22,22 @@ $bin = Join-Path $env:ProgramFiles 'MorrowE2E'
 $m = Join-Path $bin 'morrow.exe'
 $api = Join-Path $bin 'api'
 $user = 'morrowe2e'
+# A second account with a grant but outside the deployers group.
+$outsider = 'morrowe2eout'
 $secret = 'e2e-' + [guid]::NewGuid().ToString('N')
+# The value submitted through the inbox; it must never be readable either.
+$newSecret = 'e2einbox' + [guid]::NewGuid().ToString('N')
 $plainPw = 'Mx!' + [guid]::NewGuid().ToString('N')
 $securePw = ConvertTo-SecureString $plainPw -AsPlainText -Force
+$deployGroup = 'Morrow Deployers'
 
 function Cleanup {
     $ErrorActionPreference = 'Continue'
     try { & $m stop api *> $null } catch {}
     Get-Process demo-api -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     try { & net user $user /delete *> $null } catch {}
+    try { & net user $outsider /delete *> $null } catch {}
+    try { & net localgroup $deployGroup /delete *> $null } catch {}
     Remove-Item -Recurse -Force $data, $bin -ErrorAction SilentlyContinue
 }
 
@@ -42,7 +49,7 @@ try {
     Set-Content -Path (Join-Path $api 'config.json') -Value '{}'
     $env:MORROW_HOME = $null; $env:MORROW_KEY_PATH = $null
 
-    & $m init | Out-Null
+    & $m init --enable-inbox --inbox-hook=false | Out-Null
     & $m create -w $api api (Join-Path $bin 'demo-api.exe') | Out-Null
     & $m create -w $api idle (Join-Path $bin 'demo-api.exe') | Out-Null
     & $m set-env api "API_TOKEN:s=$secret" PLAIN=visible | Out-Null
@@ -55,6 +62,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the test user.' }
     $groups = (& net user $user) -join "`n"
     if ($groups -match 'Administrators') { throw "$user must not be an Administrator." }
+    & net user $outsider $plainPw /add /y | Out-Null
+    & net localgroup $deployGroup $user /add | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not add the test user to the deployers group.' }
+    & $m grant $user --app api --vars API_TOKEN | Out-Null
+    & $m grant $outsider --app api --vars API_TOKEN | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not grant API_TOKEN.' }
 
     Write-Host "ACLs after elevated 'morrow init':"
     foreach ($p in @($data, (Join-Path $data '.morrow.key'), (Join-Path $data 'morrow.db'), (Join-Path $data 'logs'))) {
@@ -62,12 +75,12 @@ try {
     }
 
     # Runs a PowerShell command as the test user; returns exit code and combined output.
-    function Invoke-AsUser([string] $command) {
+    function Invoke-AsUser([string] $command, [string] $as = $user) {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = 'powershell.exe'
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ErrorActionPreference='Stop'; `$m='$m'; $command"))
         $psi.Arguments = "-NoProfile -NonInteractive -EncodedCommand $encoded"
-        $psi.UserName = $user
+        $psi.UserName = $as
         $psi.Domain = $env:COMPUTERNAME
         $psi.Password = $securePw
         $psi.LoadUserProfile = $true
@@ -83,9 +96,9 @@ try {
 
     $script:pass = 0; $script:fail = 0
     # Check <ok|deny> <name> <command> [regex the output must match]; the secret must never appear.
-    function Check([string] $expect, [string] $name, [string] $command, [string] $pattern = '') {
-        $r = Invoke-AsUser $command
-        $ok = -not $r.Out.Contains($secret)
+    function Check([string] $expect, [string] $name, [string] $command, [string] $pattern = '', [string] $as = $user) {
+        $r = Invoke-AsUser $command $as
+        $ok = -not ($r.Out.Contains($secret) -or $r.Out.Contains($newSecret))
         if ($expect -eq 'ok') { $ok = $ok -and $r.Code -eq 0 } else { $ok = $ok -and $r.Code -ne 0 }
         if ($pattern) { $ok = $ok -and ($r.Out -match $pattern) }
         if ($ok) { $script:pass++; $tag = 'PASS' } else { $script:fail++; $tag = 'FAIL' }
@@ -141,6 +154,38 @@ try {
     } else {
         $script:fail++; Write-Host "FAIL  system state changed: $status | apps=$apps"
     }
+
+    # --- Write-only secrets through the inbox ---------------------------------
+    $inbox = Join-Path $data 'inbox'
+    $inboxKey = Join-Path $data '.morrow-inbox.key'
+    Write-Host "`ninbox, as $user (member of '$deployGroup', granted API_TOKEN of api):"
+    Check ok   'submit granted secret (from own env)'  "`$env:API_TOKEN = '$newSecret'; & `$m submit-env api API_TOKEN --restart$exit" 'Submitted 1'
+    Check deny 'list the inbox'                        "Get-ChildItem -Force '$inbox'"
+    Check deny 'read inbox private key'                "Get-Content -Raw '$inboxKey'"
+    Check deny 'submit a variable not granted'         "& `$m submit-env api DB_PASS=abcdefgh12345678$exit" 'no grant'
+    Check deny 'submit a denied name'                  "& `$m submit-env api PATHEXT=.EXE$exit" 'cannot be granted'
+    Check deny 'submit a value outside the format'     "& `$m submit-env api 'API_TOKEN=`$(whoami)'$exit" 'token format'
+    Check deny 'submit for another app'                "& `$m submit-env idle API_TOKEN=abcdefgh12345678$exit" 'no grant'
+    Check deny 'apply as non-admin'                    "& `$m apply$exit" $hint
+    Check ok   'plant a junk file (apply must reject)' "[IO.File]::WriteAllText('$inbox\0123456789abcdef0123456789abcdef.sealed', 'junk')"
+    Check deny 'granted non-member cannot write inbox' "`$env:API_TOKEN = 'abcdefgh12345678'; & `$m submit-env api API_TOKEN$exit" $deployGroup $outsider
+
+    Write-Host "`nas Administrator: morrow apply"
+    $applied = (& $m apply) -join ' '
+    Write-Host "  $applied"
+    $sec = (& $m get-env api API_TOKEN) -join ' '
+    $left = @(Get-ChildItem -Force $inbox).Count
+    if ($applied -match 'Applied 1, rejected 1' -and $sec.Contains($newSecret) -and ((& $m status api) -join ' ') -match 'running' -and $left -eq 0) {
+        $script:pass++; Write-Host 'PASS  submission applied, junk rejected, app restarted, inbox emptied'
+    } else {
+        $script:fail++; Write-Host "FAIL  apply result unexpected (files left: $left)"; & $m inbox
+    }
+
+    Write-Host "`nas $user after apply:"
+    Check deny 'read the applied secret'               "& `$m get-env api API_TOKEN$exit" $hint
+    Check ok   "see outcomes in 'morrow inbox'"        "& `$m inbox$exit" 'applied'
+    Check ok   'outcomes show rejections, no values'   "& `$m inbox$exit" 'rejected'
+
     Write-Host "`nresult: $($script:pass) passed, $($script:fail) failed"
     if ($script:fail -gt 0) { exit 1 }
 }

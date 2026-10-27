@@ -356,6 +356,7 @@ func DeleteApp(name string, force bool) error {
 	}
 
 	_, _ = tx.Exec("DELETE FROM application_environment_variables WHERE application_id = ?", app.ID)
+	_, _ = tx.Exec("DELETE FROM grants WHERE application_id = ?", app.ID)
 	_, err = tx.Exec("DELETE FROM applications WHERE application_id = ?", app.ID)
 
 	if err != nil {

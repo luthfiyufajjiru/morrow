@@ -7,6 +7,7 @@ import (
 	"morrow/internal/crypto"
 	"morrow/internal/db"
 	"morrow/internal/env"
+	"morrow/internal/inbox"
 	"morrow/internal/install"
 	"morrow/internal/privilege"
 	"os"
@@ -73,15 +74,65 @@ var InitCmd = &cobra.Command{
 			log.Fatalf("Failed to initialize master key: %v", privilege.Hint(err))
 		}
 
+		// 5. Optionally enable the inbox for write-only secret submission.
+		if enableInbox {
+			if err := setupInbox(); err != nil {
+				log.Fatalf("Failed to enable the inbox: %v", privilege.Hint(err))
+			}
+		}
+
 		fmt.Println("Successfully initialized Morrow! You can now start managing applications.")
 	},
 }
 
-var forceInit bool
+var (
+	forceInit   bool
+	enableInbox bool
+	inboxHook   bool
+)
 
 func init() {
 	InitCmd.Flags().BoolVar(&forceInit, "force", false,
 		"Create a new master key even though secured variables exist; those variables are deleted")
+	InitCmd.Flags().BoolVar(&enableInbox, "enable-inbox", false,
+		"Let non-admin deployers submit write-only secrets ('morrow grant', 'morrow submit-env')")
+	InitCmd.Flags().BoolVar(&inboxHook, "inbox-hook", true,
+		"With --enable-inbox, install a systemd unit (Linux) or scheduled task (Windows) that runs 'morrow apply'")
+}
+
+// setupInbox creates the inbox directory, its key pair and, unless disabled,
+// the OS hook that applies submissions automatically.
+func setupInbox() error {
+	if config.IsPerUser() {
+		return fmt.Errorf("the inbox is for system installs; in per-user mode (MORROW_HOME) use 'morrow set-env'")
+	}
+	dir := config.GetInboxDir()
+	if err := privilege.PrepareInboxDir(dir); err != nil {
+		return err
+	}
+	if err := crypto.InitInboxKeys(); err != nil {
+		return err
+	}
+	fmt.Printf("Inbox enabled at %s. Members of the %q group can submit granted variables with 'morrow submit-env'.\n",
+		dir, privilege.DeployGroup)
+	if !inboxHook {
+		fmt.Println("No hook installed: run 'morrow apply' as an administrator to store submissions.")
+		return nil
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return err
+	}
+	desc, err := inbox.InstallHook(exe, dir)
+	if err != nil {
+		fmt.Println("Warning: automatic apply not installed:", err)
+		return nil
+	}
+	fmt.Println("Installed", desc)
+	return nil
 }
 
 // checkKeyLoss decides whether init may create a new master key when the key

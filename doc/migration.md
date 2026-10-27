@@ -53,3 +53,11 @@ Adds `application_working_directory` to `applications` (empty = inherit the call
 ## Applying Migrations
 
 Morrow automatically applies these migrations upon startup if the database file is newly created or missing recent schema updates. The application looks for `morrow.db` in `/var/lib/morrow` (Linux/macOS) or `%ProgramData%\Morrow` (Windows) for a system install, or in `$MORROW_HOME` for a per-user install. Older system installs kept it next to the binary; it is read from there until `morrow init` (elevated) moves it.
+
+### 000004_add_grants_and_inbox_events
+Adds two tables for write-only secret submission (see [ADR 0003](adr/0003-write-only-secrets-inbox.md)):
+
+| Table | Columns | Purpose |
+| --- | --- | --- |
+| `grants` | `principal`, `application_id`, `env_name`, `format` | Which non-admin account may submit which variable of which app, and the value format it must match |
+| `inbox_events` | `submission_id` (unique), `application_name`, `env_name`, `principal`, `status`, `reason`, `event_time` | Outcome of every processed submission (never the value); the unique ID rejects replays |

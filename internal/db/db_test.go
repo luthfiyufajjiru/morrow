@@ -1,7 +1,11 @@
 package db
 
 import (
+	"io/fs"
+	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -56,8 +60,21 @@ func TestEnsureSchemaEmbedded(t *testing.T) {
 	if err := DB.QueryRow("SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 || dirty {
-		t.Errorf("schema_migrations = (%d, dirty=%v), want (3, false)", version, dirty)
+	// The latest version is the highest NNNNNN_*.up.sql embedded in the binary.
+	latest := 0
+	ups, _ := fs.Glob(migrationsFS, "migrations/*.up.sql")
+	for _, p := range ups {
+		if n, err := strconv.Atoi(strings.SplitN(path.Base(p), "_", 2)[0]); err == nil && n > latest {
+			latest = n
+		}
+	}
+	if latest < 4 || version != latest || dirty {
+		t.Errorf("schema_migrations = (%d, dirty=%v), want (%d, false)", version, dirty, latest)
+	}
+	for _, table := range []string{"grants", "inbox_events"} {
+		if len(columns(t, table)) == 0 {
+			t.Errorf("table %s missing", table)
+		}
 	}
 }
 

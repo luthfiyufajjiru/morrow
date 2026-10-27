@@ -4,6 +4,7 @@ import (
 	"morrow/cmd"
 	appCmd "morrow/cmd/app"
 	"morrow/cmd/env"
+	"morrow/cmd/inbox"
 	"morrow/cmd/relay"
 )
 
@@ -24,6 +25,12 @@ func main() {
 		env.GetEnvCmd,
 		env.DelEnvCmd,
 		env.ListEnvCmd,
+		inbox.GrantCmd,
+		inbox.RevokeCmd,
+		inbox.GrantsCmd,
+		inbox.SubmitEnvCmd,
+		inbox.ApplyCmd,
+		inbox.InboxCmd,
 		relay.RelayCmd,
 	)
 	cmd.Execute()
