@@ -146,3 +146,44 @@ func ListEnv(appName string) ([]EnvVar, error) {
 	}
 	return envs, nil
 }
+
+// SecuredRef identifies one secured variable without its value.
+type SecuredRef struct {
+	App  string
+	Name string
+}
+
+// ListSecured returns every secured variable across all applications, in
+// stable order. Used by init to detect values a new master key could not decrypt.
+func ListSecured() ([]SecuredRef, error) {
+	rows, err := db.DB.Query(`
+		SELECT applications.application_name, env_name FROM application_environment_variables
+		JOIN applications ON application_environment_variables.application_id = applications.application_id
+		WHERE env_is_secured = 1
+		ORDER BY applications.application_name, env_name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var refs []SecuredRef
+	for rows.Next() {
+		var r SecuredRef
+		if err := rows.Scan(&r.App, &r.Name); err != nil {
+			return nil, err
+		}
+		refs = append(refs, r)
+	}
+	return refs, rows.Err()
+}
+
+// DeleteSecured removes every secured variable. Only meant for `init --force`
+// after the master key is lost, when those values can never be decrypted again.
+func DeleteSecured() (int64, error) {
+	res, err := db.DB.Exec("DELETE FROM application_environment_variables WHERE env_is_secured = 1")
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

@@ -13,6 +13,13 @@ import (
 	"os"
 )
 
+// MasterKeyMissing reports whether the key file does not exist. Other stat
+// errors (e.g. permission denied) count as present: the key may well exist.
+func MasterKeyMissing() bool {
+	_, err := os.Stat(config.GetKeyPath())
+	return errors.Is(err, os.ErrNotExist)
+}
+
 func getMasterKey() ([]byte, error) {
 	key, err := os.ReadFile(config.GetKeyPath())
 	if err != nil {

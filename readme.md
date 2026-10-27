@@ -76,7 +76,7 @@ sudo ./morrow start my-app
 ## Command List
 | Descriptions | Commands |
 | --- | --- |
-| Initialize Morrow (sudo / Administrator, unless `MORROW_HOME` is set) | `morrow init` |
+| Initialize Morrow (sudo / Administrator, unless `MORROW_HOME` is set) | `morrow init [--force]` |
 | Set environment variable | `morrow set-env <app-name> <key=value> [key2=value2]...` |
 | Get environment variable | `morrow get-env <app-name> <env-name>` |
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
@@ -213,6 +213,7 @@ This ensures high availability and reliable log capture without requiring a heav
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 
 - **Access follows the key file**: secured values are encrypted with the master key (`.morrow.key` next to the binary, or `MORROW_KEY_PATH`). Whoever can read that file can decrypt them. `init` restricts it to its owner (`0600` on Linux/macOS; on Windows an explicit ACL for SYSTEM + Administrators, or only the current user in per-user mode), so in a system install only root/Administrators can read secured values.
+- **Back up the key**: only `morrow init` creates it, and secured values cannot be recovered without it. If the key is lost while secured variables exist, `init` refuses to create a new one and lists them; restore the original key file, or run `morrow init --force` to create a new key and delete those variables.
 - **Censorship**: `detail` (table and `--json`, including the Full Command) always shows secured values as `****`. `list-env` shows them as `****` when the key is not readable; `get-env` and `start` fail with a clear error in that case.
 - **Mixed Bulk Support**: You can override the default security setting per variable by suffixing the key:
     - `key:s=value` -> Force Secured (encrypted)

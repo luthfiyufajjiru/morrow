@@ -222,3 +222,47 @@ func TestSetSecuredWithoutKeyFails(t *testing.T) {
 		t.Errorf("unsecured SetEnv: %v", err)
 	}
 }
+
+func TestListAndDeleteSecured(t *testing.T) {
+	setupDB(t)
+	addApp(t, "b")
+	addApp(t, "a")
+	for _, v := range []struct {
+		app, key string
+		secured  bool
+	}{
+		{"b", "TOKEN", true},
+		{"a", "PASS", true},
+		{"a", "PLAIN", false},
+		{"a", "API", true},
+	} {
+		if err := SetEnv(v.app, v.key, "v", v.secured); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refs, err := ListSecured()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SecuredRef{{"a", "API"}, {"a", "PASS"}, {"b", "TOKEN"}}
+	if len(refs) != len(want) {
+		t.Fatalf("ListSecured = %v, want %v", refs, want)
+	}
+	for i := range want {
+		if refs[i] != want[i] {
+			t.Errorf("ListSecured[%d] = %v, want %v", i, refs[i], want[i])
+		}
+	}
+
+	n, err := DeleteSecured()
+	if err != nil || n != 3 {
+		t.Fatalf("DeleteSecured = %d, %v; want 3", n, err)
+	}
+	if refs, _ := ListSecured(); len(refs) != 0 {
+		t.Errorf("secured left after delete: %v", refs)
+	}
+	if v, _, err := GetEnv("a", "PLAIN"); err != nil || v != "v" {
+		t.Errorf("unsecured variable affected: %q, %v", v, err)
+	}
+}

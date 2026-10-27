@@ -219,3 +219,22 @@ func TestEncryptAfterKeyLossKeepsOldSecretsRecoverable(t *testing.T) {
 		t.Fatalf("restored key should decrypt old value: %q, %v", got, err)
 	}
 }
+
+func TestMasterKeyMissing(t *testing.T) {
+	keyPath := setupNoKey(t)
+	if !MasterKeyMissing() {
+		t.Error("expected missing before init")
+	}
+	if err := InitMasterKey(); err != nil {
+		t.Fatal(err)
+	}
+	if MasterKeyMissing() {
+		t.Error("expected present after init")
+	}
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if !MasterKeyMissing() {
+		t.Error("expected missing after delete")
+	}
+}
