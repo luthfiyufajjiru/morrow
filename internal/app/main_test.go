@@ -1,7 +1,9 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"morrow/internal/config"
 	"morrow/internal/crypto"
 	"morrow/internal/db"
 	"morrow/internal/env"
@@ -396,5 +399,52 @@ func TestStaleRunningTreatedAsStopped(t *testing.T) {
 	}
 	if err := DeleteApp("ghost", false); err != nil {
 		t.Errorf("DeleteApp without force on stale app: %v", err)
+	}
+}
+
+func TestStartAppReadOnlyDBSpawnsNothing(t *testing.T) {
+	setupDB(t)
+	mustCreate(t, "ro", nil, "")
+	dbPath := filepath.Join(os.Getenv("MORROW_HOME"), "morrow.db")
+	rw := db.DB
+	ro, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dbPath)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.DB = ro
+	t.Cleanup(func() { ro.Close(); db.DB = rw })
+
+	_, err = StartApp("ro", nil)
+	if err == nil || !strings.Contains(err.Error(), "readonly") {
+		t.Fatalf("err = %v, want readonly database error", err)
+	}
+	if _, statErr := os.Stat(config.GetRelayPIDFilePath("ro")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("relay was started before the write check (relay PID file exists)")
+	}
+}
+
+func TestRestartApp(t *testing.T) {
+	setupDB(t)
+
+	// Not running: restart behaves like start, so the start error surfaces.
+	mustCreate(t, "sec", nil, "")
+	if err := env.SetEnv("sec", "TOKEN", "abc", true); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MORROW_KEY_PATH", filepath.Join(t.TempDir(), "missing.key"))
+	if _, err := RestartApp("sec"); err == nil || !strings.Contains(err.Error(), "cannot decrypt") {
+		t.Errorf("err = %v, want the start error", err)
+	}
+
+	if _, err := RestartApp("nope"); err == nil || errors.Is(err, ErrNotRunning) {
+		t.Errorf("unknown app: err = %v, want not-found", err)
+	}
+}
+
+func TestStopAppNotRunning(t *testing.T) {
+	setupDB(t)
+	mustCreate(t, "idle", nil, "")
+	if err := StopApp("idle"); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("err = %v, want ErrNotRunning", err)
 	}
 }
