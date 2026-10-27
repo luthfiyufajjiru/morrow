@@ -78,13 +78,13 @@ Register a new application and start it. On a system install, commands that chan
 ```bash
 # Create the app (Morrow flags such as -w go before the app name;
 # everything after the executable is passed to the app as-is)
-sudo ./morrow create -w /path/to/workdir my-app /path/to/executable --port 8080
+sudo morrow create -w /path/to/workdir my-app /path/to/executable --port 8080
 
 # Start it
-sudo ./morrow start my-app
+sudo morrow start my-app
 
 # Check status (read-only, no sudo needed)
-./morrow list
+morrow list
 ```
 
 ## Command List
@@ -113,9 +113,9 @@ By default, this command outputs a human-readable table. Use the `--json` flag f
 
 The outputs below are real, captured on Linux (system install; `detail` run as a regular user, without sudo) after:
 ```bash
-sudo ./morrow create -w /tmp/demo/api api /tmp/demo/bin/demo-api --port 8080
-sudo ./morrow set-env api API_TOKEN:s=s3cr3t-demo-token LOG_LEVEL=info
-sudo ./morrow start api
+sudo morrow create -w /tmp/demo/api api /tmp/demo/bin/demo-api --port 8080
+sudo morrow set-env api API_TOKEN:s=s3cr3t-demo-token LOG_LEVEL=info
+sudo morrow start api
 ```
 
 ### Default Terminal Table
@@ -129,18 +129,18 @@ morrow detail api
 +----------------------------+------------------------------------------+
 | Field                      | Value                                    |
 +----------------------------+------------------------------------------+
-| Application ID             | 98dcdf18-4ca2-4a74-9fd5-281b8d42e71e     |
+| Application ID             | 1438888c-1a40-4658-a1a2-0469083b0493     |
 | Application Name           | api                                      |
 | Executable Path            | /tmp/demo/bin/demo-api                   |
 | Arguments                  | --port 8080                              |
 | Working Directory          | /tmp/demo/api                            |
 | Full Command               | API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080 |
 | Status                     | running                                  |
-| PID                        | 302                                      |
-| Creation Time              | 2026-10-27T08:40:21Z                     |
-| Update Time                | 2026-10-27T08:40:24Z                     |
-| Status Time                | 2026-10-27T08:40:24Z                     |
-| Last Run Time              | 2026-10-27T08:40:24Z                     |
+| PID                        | 288                                      |
+| Creation Time              | 2026-10-27T09:24:24Z                     |
+| Update Time                | 2026-10-27T09:24:27Z                     |
+| Status Time                | 2026-10-27T09:24:27Z                     |
+| Last Run Time              | 2026-10-27T09:24:27Z                     |
 +----------------------------+------------------------------------------+
 ```
 
@@ -153,7 +153,7 @@ morrow detail api --json
 **Result:**
 ```json
 {
-  "application_id": "98dcdf18-4ca2-4a74-9fd5-281b8d42e71e",
+  "application_id": "1438888c-1a40-4658-a1a2-0469083b0493",
   "application_name": "api",
   "application_executable_path": "/tmp/demo/bin/demo-api",
   "application_arguments": [
@@ -166,11 +166,11 @@ morrow detail api --json
     "LOG_LEVEL": "info"
   },
   "application_status": "running",
-  "application_pid": 302,
-  "application_creation_time": "2026-10-27T08:40:21Z",
-  "application_update_time": "2026-10-27T08:40:24Z",
-  "application_status_time": "2026-10-27T08:40:24Z",
-  "application_last_run_time": "2026-10-27T08:40:24Z",
+  "application_pid": 288,
+  "application_creation_time": "2026-10-27T09:24:24Z",
+  "application_update_time": "2026-10-27T09:24:27Z",
+  "application_status_time": "2026-10-27T09:24:27Z",
+  "application_last_run_time": "2026-10-27T09:24:27Z",
   "application_command_line": "API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080"
 }
 ```
