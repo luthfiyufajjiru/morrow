@@ -246,7 +246,7 @@ var LogsAppCmd = &cobra.Command{
 				Poll:      true, // fsnotify often hangs on Windows when another process writes
 				// Resume exactly where the initial read stopped so no lines are lost in between.
 				Location: &tail.SeekInfo{Offset: int64(len(data)), Whence: io.SeekStart},
-				Logger:    tail.DiscardingLogger,
+				Logger:   tail.DiscardingLogger,
 			})
 			if err != nil {
 				log.Fatalf("Failed to follow logs: %v", privilege.Hint(err))

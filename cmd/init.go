@@ -28,7 +28,7 @@ var InitCmd = &cobra.Command{
 		if err := db.InitDB(config.GetDBPath()); err != nil {
 			log.Fatalf("Failed to initialize database: %v", privilege.Hint(err))
 		}
-		
+
 		if err := db.EnsureSchemaEmbedded(); err != nil {
 			log.Fatalf("Failed to run embedded migrations: %v", privilege.Hint(err))
 		}
@@ -60,7 +60,7 @@ var InitCmd = &cobra.Command{
 		if err := crypto.InitMasterKey(); err != nil {
 			log.Fatalf("Failed to initialize master key: %v", privilege.Hint(err))
 		}
-		
+
 		fmt.Println("Successfully initialized Morrow! You can now start managing applications.")
 	},
 }
