@@ -50,7 +50,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Administrator setup failed.' }
     Start-Sleep -Seconds 1
 
-    & net user $user $plainPw /add | Out-Null
+    # /y answers net's interactive prompt for passwords longer than 14 characters.
+    & net user $user $plainPw /add /y | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the test user.' }
     $groups = (& net user $user) -join "`n"
     if ($groups -match 'Administrators') { throw "$user must not be an Administrator." }
