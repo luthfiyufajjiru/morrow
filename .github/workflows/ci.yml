@@ -35,6 +35,36 @@ jobs:
         if: runner.os == 'Windows'
         run: go test -count=1 ./...
 
+  escalation:
+    # End-to-end permission matrix: an elevated init, then every command and
+    # several bypass attempts as a regular user (test/e2e/escalation.*).
+    name: escalation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          go build -o "bin/morrow$ext" .
+          go -C doc/assets/demo/demo-api build -o "$PWD/bin/demo-api$ext" .
+      - name: matrix (Linux, regular user vs sudo)
+        if: runner.os == 'Linux'
+        run: sudo sh test/e2e/escalation.sh "$USER" "$PWD/bin/morrow" "$PWD/bin/demo-api"
+      - name: matrix (Windows, throwaway non-admin user vs Administrator)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./test/e2e/escalation.ps1 -Morrow bin/morrow.exe -DemoApi bin/demo-api.exe
+
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }})
     runs-on: ubuntu-latest

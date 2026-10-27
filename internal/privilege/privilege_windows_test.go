@@ -4,6 +4,7 @@ package privilege
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -72,4 +73,30 @@ func TestRestrictKeyFile(t *testing.T) {
 			t.Errorf("users must not have access: %s", sddl)
 		}
 	})
+}
+
+func TestPrepareSystemDir(t *testing.T) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []bool{false, true} {
+		dir := filepath.Join(t.TempDir(), "Morrow")
+		if err := PrepareSystemDir(dir, private); err != nil {
+			t.Fatal(err)
+		}
+		sddl := keySDDL(t, dir)
+		// Give the directory back to the test user (who keeps WRITE_DAC as its
+		// owner) so TempDir cleanup works when the test does not run elevated.
+		t.Cleanup(func() { _ = setDACL(dir, "D:P(A;OICI;FA;;;"+user.User.Sid.String()+")") })
+		if !strings.HasPrefix(sddl, "D:P") || !strings.Contains(sddl, ";SY)") || !strings.Contains(sddl, ";BA)") {
+			t.Errorf("private=%v: want protected DACL for SYSTEM+Administrators, got %s", private, sddl)
+		}
+		if hasUsers := strings.Contains(sddl, ";BU)"); hasUsers == private {
+			t.Errorf("private=%v: Users access = %v in %s", private, hasUsers, sddl)
+		}
+		if strings.Contains(sddl, "FA;;;BU)") || strings.Contains(sddl, "WD") {
+			t.Errorf("Users must not be able to write: %s", sddl)
+		}
+	}
 }

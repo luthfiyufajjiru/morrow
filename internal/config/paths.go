@@ -6,46 +6,135 @@ import (
 	"path/filepath"
 )
 
-// GetPath returns a path relative to the Morrow executable.
-func GetPath(filename string) string {
-	if envPath := os.Getenv("MORROW_HOME"); envPath != "" {
-		return filepath.Join(envPath, filename)
+const (
+	dbFile  = "morrow.db"
+	keyFile = ".morrow.key"
+	logsDir = "logs"
+)
+
+// Layout is where one install keeps its database, master key and logs.
+type Layout struct {
+	DBPath  string
+	KeyPath string
+	LogsDir string
+}
+
+// Dirs returns the distinct directories of the layout, in creation order.
+func (l Layout) Dirs() []string {
+	var dirs []string
+	for _, d := range []string{filepath.Dir(l.KeyPath), filepath.Dir(l.DBPath), l.LogsDir} {
+		if !contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
 	}
+	return dirs
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// flatLayout keeps everything in one directory: per-user installs and the
+// legacy system install next to the binary.
+func flatLayout(dir string) Layout {
+	return Layout{
+		DBPath:  filepath.Join(dir, dbFile),
+		KeyPath: filepath.Join(dir, keyFile),
+		LogsDir: filepath.Join(dir, logsDir),
+	}
+}
+
+// systemRoot is the base the system layout is built from (see systemLayout);
+// tests point it at a temp dir instead of the real /etc or ProgramData.
+var systemRoot = defaultSystemRoot()
+
+// exeDir returns the directory of the running binary; tests override it.
+var exeDir = func() (string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return filename
+		return "", err
 	}
-	exeDir := filepath.Dir(exePath)
-	return filepath.Join(exeDir, filename)
+	return filepath.Dir(exePath), nil
+}
+
+// SystemLayout returns the layout of a system install (MORROW_HOME unset).
+func SystemLayout() Layout {
+	return systemLayout(systemRoot)
+}
+
+// LegacyLayout returns where older system installs kept their data:
+// next to the binary. ok is false if the binary's location is unknown.
+func LegacyLayout() (layout Layout, ok bool) {
+	dir, err := exeDir()
+	if err != nil {
+		return Layout{}, false
+	}
+	return flatLayout(dir), true
 }
 
 // IsPerUser reports whether Morrow runs as a per-user install (MORROW_HOME
-// set) rather than a system install with data next to the binary.
+// set) rather than a system install.
 func IsPerUser() bool {
 	return os.Getenv("MORROW_HOME") != ""
 }
 
-// GetDataDir returns the directory holding the database, key and logs.
+// UsingLegacy reports whether a system install still runs from the legacy
+// next-to-binary location because `morrow init` has not migrated it yet.
+func UsingLegacy() bool {
+	if IsPerUser() || exists(SystemLayout().DBPath) {
+		return false
+	}
+	legacy, ok := LegacyLayout()
+	return ok && exists(legacy.DBPath)
+}
+
+// Current returns the layout this process uses: MORROW_HOME for per-user
+// installs, otherwise the system layout, falling back to the legacy location
+// until it is migrated. MORROW_KEY_PATH overrides the key in every mode.
+func Current() Layout {
+	var l Layout
+	switch {
+	case IsPerUser():
+		l = flatLayout(os.Getenv("MORROW_HOME"))
+	case UsingLegacy():
+		l, _ = LegacyLayout()
+	default:
+		l = SystemLayout()
+	}
+	if envPath := os.Getenv("MORROW_KEY_PATH"); envPath != "" {
+		l.KeyPath = envPath
+	}
+	return l
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// GetDataDir returns the directory holding the database.
 func GetDataDir() string {
-	return filepath.Dir(GetPath("morrow.db"))
+	return filepath.Dir(GetDBPath())
 }
 
 // GetDBPath returns the absolute path to the database file.
 func GetDBPath() string {
-	return GetPath("morrow.db")
+	return Current().DBPath
 }
 
 // GetKeyPath returns the absolute path to the encryption key file.
 func GetKeyPath() string {
-	if envPath := os.Getenv("MORROW_KEY_PATH"); envPath != "" {
-		return envPath
-	}
-	return GetPath(".morrow.key")
+	return Current().KeyPath
 }
 
 // GetLogsDir returns the absolute path to the logs directory, creating it if needed.
 func GetLogsDir() string {
-	dir := GetPath("logs")
+	dir := Current().LogsDir
 	_ = os.MkdirAll(dir, 0755)
 	return dir
 }

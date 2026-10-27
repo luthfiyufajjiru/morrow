@@ -42,20 +42,34 @@ make all
 ### 2. Initialization
 Morrow requires an initial setup to create its database and encryption keys.
 
-**System install** (data next to the binary, e.g. `/usr/local/bin` or `C:\Program Files\Morrow`) must be initialized elevated, so the database and key are owned by root/Administrators:
+**System install** must be initialized elevated, so the database and key are owned by root/Administrators:
 ```bash
 sudo morrow init        # Linux/macOS
 morrow init             # Windows: from an Administrator terminal
 ```
 Afterwards, regular users can still run read-only commands (`list`, `status`, `detail`, `list-env`), while changes (`create`, `start`, `stop`, `set-env`, ...) and secured values require sudo/Administrator.
 
-**Per-user install** needs no elevation: point `MORROW_HOME` at a directory you own.
+Its data lives outside the binary's directory, so upgrading or reinstalling the binary never touches it:
+
+| | Linux/macOS | Windows |
+| --- | --- | --- |
+| Master key | `/etc/morrow/.morrow.key` (dir `0700`, file `0600`, root) | `%ProgramData%\Morrow\.morrow.key` (SYSTEM + Administrators only) |
+| Database | `/var/lib/morrow/morrow.db` | `%ProgramData%\Morrow\morrow.db` |
+| Logs | `/var/log/morrow/` | `%ProgramData%\Morrow\logs\` |
+
+`init` creates these directories. Only the database directory is readable by regular users (`/var/lib/morrow` is `0755`; on Windows `%ProgramData%\Morrow` gets an explicit ACL with full control for SYSTEM and Administrators and read for Users), so read-only commands work without elevation. The logs directory is root/Administrators only (`/var/log/morrow` is `0700`; `%ProgramData%\Morrow\logs` has no Users entry), because apps may print secrets.
+
+**Per-user install** needs no elevation: point `MORROW_HOME` at a directory you own. The database, key and `logs/` all live there, and `init` creates it if needed.
 ```bash
 export MORROW_HOME="$HOME/.morrow"
 morrow init
 ```
 
+`MORROW_KEY_PATH` overrides the key location in either mode.
+
 Re-running `init` on an existing install is safe: it keeps the key and re-applies its access restrictions.
+
+**Upgrading from an older system install** (data next to the binary, e.g. `/usr/local/bin/morrow.db` or `C:\Program Files\Morrow\morrow.db`): the new binary keeps using the old location and prints a one-line note until you run `sudo morrow init` (Windows: `morrow init` as Administrator) once. That moves the database and key to the new location (re-applying the key restrictions) and copies the logs. Apps that are running keep writing to the old `logs/` until restarted (`morrow restart <app>`); delete the old `logs/` afterwards. If a different key already exists at the new location, `init` stops without changing anything.
 
 ### 3. Basic Usage
 ![morrow quick start: init, create with a working directory, start, list and logs](doc/assets/quickstart.gif)
@@ -205,14 +219,14 @@ Morrow implements a **Sidecar Relay Pattern** for robust process management.
 When an application is started:
 1. **Relay Spawn**: Morrow launches a detached "relay" process for that specific application.
 2. **Process Isolation**: The relay process detaches from the parent terminal session, ensuring the application continues running after the user logs out or closes the terminal.
-3. **Log Management**: The relay handles real-time logging, piping the application's `stdout` and `stderr` to rotating log files (using the `lumberjack` library).
+3. **Log Management**: The relay handles real-time logging, piping the application's `stdout` and `stderr` to rotating log files (using the `lumberjack` library) in the install's logs directory (`/var/log/morrow`, `%ProgramData%\Morrow\logs` or `$MORROW_HOME/logs`). It resolves the same paths as the CLI, so `morrow logs` reads what the relay writes.
 4. **State Sync**: The relay continuously synchronizes the application's status (running, stopped, crashed) with the Morrow database.
 
 This ensures high availability and reliable log capture without requiring a heavy daemon to be running constantly in the background.
 
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 
-- **Access follows the key file**: secured values are encrypted with the master key (`.morrow.key` next to the binary, or `MORROW_KEY_PATH`). Whoever can read that file can decrypt them. `init` restricts it to its owner (`0600` on Linux/macOS; on Windows an explicit ACL for SYSTEM + Administrators, or only the current user in per-user mode), so in a system install only root/Administrators can read secured values.
+- **Access follows the key file**: secured values are encrypted with the master key (`/etc/morrow/.morrow.key`, `%ProgramData%\Morrow\.morrow.key`, `$MORROW_HOME/.morrow.key`, or `MORROW_KEY_PATH`). Whoever can read that file can decrypt them. `init` restricts it to its owner (`0600` on Linux/macOS; on Windows an explicit ACL for SYSTEM + Administrators, or only the current user in per-user mode), so in a system install only root/Administrators can read secured values.
 - **Back up the key**: only `morrow init` creates it, and secured values cannot be recovered without it. If the key is lost while secured variables exist, `init` refuses to create a new one and lists them; restore the original key file, or run `morrow init --force` to create a new key and delete those variables.
 - **Censorship**: `detail` (table and `--json`, including the Full Command) always shows secured values as `****`. `list-env` shows them as `****` when the key is not readable; `get-env` and `start` fail with a clear error in that case.
 - **Mixed Bulk Support**: You can override the default security setting per variable by suffixing the key:

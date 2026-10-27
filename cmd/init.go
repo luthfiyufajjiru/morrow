@@ -7,8 +7,10 @@ import (
 	"morrow/internal/crypto"
 	"morrow/internal/db"
 	"morrow/internal/env"
+	"morrow/internal/install"
 	"morrow/internal/privilege"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -24,7 +26,17 @@ var InitCmd = &cobra.Command{
 
 		fmt.Println("Initializing Morrow...")
 
-		// 1. Initialize DB and Migration
+		// 1. Create the data directories; for a system install also move data
+		// from older installs that kept it next to the binary.
+		if config.IsPerUser() {
+			if err := install.PrepareUser(config.Current()); err != nil {
+				log.Fatalf("Failed to create data directories: %v", privilege.Hint(err))
+			}
+		} else if err := setupSystem(); err != nil {
+			log.Fatalf("Failed to set up system directories: %v", privilege.Hint(err))
+		}
+
+		// 2. Initialize DB and Migration
 		if err := db.InitDB(config.GetDBPath()); err != nil {
 			log.Fatalf("Failed to initialize database: %v", privilege.Hint(err))
 		}
@@ -33,7 +45,7 @@ var InitCmd = &cobra.Command{
 			log.Fatalf("Failed to run embedded migrations: %v", privilege.Hint(err))
 		}
 
-		// 2. Refuse to replace a lost key while values encrypted with it exist,
+		// 3. Refuse to replace a lost key while values encrypted with it exist,
 		// unless --force accepts losing them.
 		if crypto.MasterKeyMissing() {
 			secured, err := env.ListSecured()
@@ -55,7 +67,7 @@ var InitCmd = &cobra.Command{
 			}
 		}
 
-		// 3. Initialize Master Key for Encryption
+		// 4. Initialize Master Key for Encryption
 		fmt.Println("Generating master key for secured environment variables...")
 		if err := crypto.InitMasterKey(); err != nil {
 			log.Fatalf("Failed to initialize master key: %v", privilege.Hint(err))
@@ -91,4 +103,35 @@ func checkKeyLoss(secured []env.SecuredRef, force bool, keyPath string) error {
 func IsInitiated() bool {
 	_, err := os.Stat(config.GetDBPath())
 	return !os.IsNotExist(err)
+}
+
+// setupSystem creates the system install's directories and migrates a legacy
+// next-to-binary install into them.
+func setupSystem() error {
+	layout := config.SystemLayout()
+	if err := install.PrepareSystem(layout); err != nil {
+		return err
+	}
+	legacy, ok := config.LegacyLayout()
+	if !ok {
+		return nil
+	}
+	// An overridden key stays where MORROW_KEY_PATH points.
+	res, err := install.MigrateLegacy(legacy, layout, os.Getenv("MORROW_KEY_PATH") == "")
+	if err != nil {
+		return fmt.Errorf("failed to migrate data from %s: %w", filepath.Dir(legacy.DBPath), err)
+	}
+	if !res.Migrated {
+		return nil
+	}
+	fmt.Printf("Migrated data from %s:\n  database -> %s\n  key      -> %s\n  logs     -> %s\n",
+		filepath.Dir(legacy.DBPath), layout.DBPath, config.GetKeyPath(), layout.LogsDir)
+	if _, err := os.Stat(legacy.LogsDir); err == nil {
+		fmt.Printf("The old logs in %s were copied, not moved: apps running now keep writing there until restarted "+
+			"('morrow restart <app>'). Delete that directory afterwards.\n", legacy.LogsDir)
+	}
+	for _, w := range res.Warnings {
+		fmt.Println("Warning:", w)
+	}
+	return nil
 }

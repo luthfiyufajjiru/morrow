@@ -30,6 +30,11 @@ var RootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if config.UsingLegacy() {
+			fmt.Fprintf(os.Stderr, "Note: Morrow data is still in the old location next to the binary (%s); %s to move it.\n",
+				config.GetDataDir(), privilege.MigrateHint)
+		}
+
 		if err := db.InitDB(config.GetDBPath()); err != nil {
 			log.Fatalf("failed to open db: %v", privilege.Hint(err))
 		}

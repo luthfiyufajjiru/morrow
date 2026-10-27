@@ -52,4 +52,4 @@ Adds `application_working_directory` to `applications` (empty = inherit the call
 
 ## Applying Migrations
 
-Morrow automatically applies these migrations upon startup if the database file is newly created or missing recent schema updates. The application looks for the `morrow.db` file in the configured `sqlite` path.
+Morrow automatically applies these migrations upon startup if the database file is newly created or missing recent schema updates. The application looks for `morrow.db` in `/var/lib/morrow` (Linux/macOS) or `%ProgramData%\Morrow` (Windows) for a system install, or in `$MORROW_HOME` for a per-user install. Older system installs kept it next to the binary; it is read from there until `morrow init` (elevated) moves it.
