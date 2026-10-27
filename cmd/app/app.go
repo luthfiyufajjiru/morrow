@@ -1,9 +1,9 @@
 package app
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"morrow/internal/app"
 	"morrow/internal/config"
@@ -18,9 +18,10 @@ import (
 var jsonOutput bool
 var inlineEnvs []string
 var forceDelete bool
+var workDir string
 
 var CreateAppCmd = &cobra.Command{
-	Use:   "create [app-name] [executable-path] [args...]",
+	Use:   "create [flags] [app-name] [executable-path] [args...]",
 	Short: "Create a new managed application",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -31,7 +32,7 @@ var CreateAppCmd = &cobra.Command{
 			appArgs = args[2:]
 		}
 
-		if err := app.CreateApp(name, execPath, appArgs); err != nil {
+		if err := app.CreateApp(name, execPath, appArgs, workDir); err != nil {
 			log.Fatalf("Error: %v", err)
 		}
 		fmt.Printf("Successfully created application %s\n", name)
@@ -63,6 +64,7 @@ var DetailAppCmd = &cobra.Command{
 		fmt.Printf("| %-26s | %-40s |\n", "Application Name", detail.Name)
 		fmt.Printf("| %-26s | %-40s |\n", "Executable Path", detail.ExecutablePath)
 		fmt.Printf("| %-26s | %-40s |\n", "Arguments", strings.Join(detail.Arguments, " "))
+		fmt.Printf("| %-26s | %-40s |\n", "Working Directory", detail.WorkingDir)
 		fmt.Printf("| %-26s | %-40s |\n", "Full Command", detail.CommandLine)
 		fmt.Printf("| %-26s | %-40s |\n", "Status", detail.Status)
 		fmt.Printf("| %-26s | %-40d |\n", "PID", detail.PID)
@@ -176,7 +178,7 @@ var StatusAppCmd = &cobra.Command{
 }
 
 var UpdateAppCmd = &cobra.Command{
-	Use:   "update [app-name] [executable-path] [args...]",
+	Use:   "update [flags] [app-name] [executable-path] [args...]",
 	Short: "Update an application's configuration",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -186,7 +188,11 @@ var UpdateAppCmd = &cobra.Command{
 		if len(args) > 2 {
 			appArgs = args[2:]
 		}
-		if err := app.UpdateApp(name, execPath, appArgs); err != nil {
+		var dir *string
+		if cmd.Flags().Changed("workdir") {
+			dir = &workDir
+		}
+		if err := app.UpdateApp(name, execPath, appArgs, dir); err != nil {
 			log.Fatalf("Error: %v", err)
 		}
 		fmt.Printf("Successfully updated application %s\n", name)
@@ -204,18 +210,17 @@ var LogsAppCmd = &cobra.Command{
 		appName := args[0]
 		logPath := config.GetLogFilePath(appName)
 
-		f, err := os.Open(logPath)
+		data, err := os.ReadFile(logPath)
 		if err != nil {
 			log.Fatalf("No logs found for %s (has it been started?)", appName)
 		}
 
-		// Read entire file to memory for simple tailing (standard behavior)
+		// Split in memory: unlike bufio.Scanner this has no per-line length limit.
+		content := strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 		var lines []string
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
+		if content != "" {
+			lines = strings.Split(content, "\n")
 		}
-		f.Close()
 
 		start := 0
 		if logsLines > 0 && len(lines) > logsLines {
@@ -234,7 +239,8 @@ var LogsAppCmd = &cobra.Command{
 				ReOpen:    true, // Auto reopen if lumberjack rotates it
 				MustExist: true,
 				Poll:      true, // fsnotify often hangs on Windows when another process writes
-				Location:  &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
+				// Resume exactly where the initial read stopped so no lines are lost in between.
+				Location: &tail.SeekInfo{Offset: int64(len(data)), Whence: io.SeekStart},
 				Logger:    tail.DiscardingLogger,
 			})
 			if err != nil {
@@ -248,6 +254,12 @@ var LogsAppCmd = &cobra.Command{
 }
 
 func init() {
+	// Stop flag parsing at the first positional arg so app arguments such as
+	// "--port 8080" are passed through instead of rejected as unknown flags.
+	CreateAppCmd.Flags().SetInterspersed(false)
+	UpdateAppCmd.Flags().SetInterspersed(false)
+	CreateAppCmd.Flags().StringVarP(&workDir, "workdir", "w", "", "Working directory for the application")
+	UpdateAppCmd.Flags().StringVarP(&workDir, "workdir", "w", "", "Working directory for the application (empty string clears it)")
 	DetailAppCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	StartAppCmd.Flags().StringSliceVarP(&inlineEnvs, "env", "e", []string{}, "Inline environment variables (KEY=VALUE)")
 	DeleteAppCmd.Flags().BoolVarP(&forceDelete, "force", "f", false, "Force delete even if running (stops the app first)")

@@ -20,6 +20,9 @@ Adds the `env_is_secured` column to the `application_environment_variables` tabl
 ### [000002_add_secured_to_envs.down.sql](../migration/000002_add_secured_to_envs.down.sql)
 Removes the `env_is_secured` column from the `application_environment_variables` table.
 
+### [000003_add_working_directory.up.sql](../internal/db/migrations/000003_add_working_directory.up.sql)
+Adds `application_working_directory` to `applications` (empty = inherit the caller's directory).
+
 ## Schema Details
 
 ### `applications` Table
@@ -34,6 +37,7 @@ Removes the `env_is_secured` column from the `application_environment_variables`
 | `application_pid` | `INTEGER` | Process ID if running. |
 | `application_creation_time` | `DATETIME` | Time application was created. |
 | `application_update_time` | `DATETIME` | Time application metadata was updated. |
+| `application_working_directory` | `TEXT` | Working directory the process is started in (empty = inherit). |
 
 ### `application_environment_variables` Table
 

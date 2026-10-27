@@ -67,12 +67,12 @@ Register a new application and start it:
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
 | List environment variables | `morrow list-env <app-name>` |
 | List All Applications | `morrow list` |
-| Create Application | `morrow create <app-name> <exec-path> <args...>` |
+| Create Application | `morrow create [-w <workdir>] <app-name> <exec-path> <args...>` |
 | Delete Application | `morrow delete <app-name>` |
 | Start Application | `morrow start <app-name> [-e KEY=VALUE...]` |
 | Stop Application | `morrow stop <app-name>` |
 | Restart Application | `morrow restart <app-name>` |
-| Update Application | `morrow update <app-name> <exec-path> <args...>` |
+| Update Application | `morrow update [-w <workdir>] <app-name> <exec-path> <args...>` |
 | Get Application Status | `morrow status <app-name>` |
 | Get Application Detail | `morrow detail <app-name>` |
 | Get Application Logs | `morrow logs <app-name>` |

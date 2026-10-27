@@ -32,6 +32,11 @@ var RootCmd = &cobra.Command{
 		if err := db.InitDB(config.GetDBPath()); err != nil {
 			log.Fatalf("failed to open db: %v", err)
 		}
+
+		// Apply pending migrations so upgraded binaries work against older databases.
+		if err := db.EnsureSchemaEmbedded(); err != nil {
+			log.Fatalf("failed to migrate db: %v", err)
+		}
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		if db.DB != nil {

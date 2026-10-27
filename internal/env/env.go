@@ -11,6 +11,9 @@ type EnvVar struct {
 	Name      string
 	Value     string
 	IsSecured bool
+	// Locked is true when the variable is secured but the caller cannot read the
+	// master key. Value is empty in that case.
+	Locked bool
 }
 
 func appExists(name string) (string, error) {
@@ -74,9 +77,7 @@ func GetEnv(appName string, key string) (string, bool, error) {
 	if isSecured {
 		decrypted, err := crypto.Decrypt(value)
 		if err != nil {
-			// If decryption fails (e.g. missing key), return the encrypted value and the secured flag.
-			// This allows the caller/daemon to handle the failure gracefully.
-			return value, true, nil
+			return "", true, fmt.Errorf("cannot decrypt secured variable %s: %w", key, err)
 		}
 		return decrypted, true, nil
 	}
@@ -131,12 +132,15 @@ func ListEnv(appName string) ([]EnvVar, error) {
 		}
 		e.IsSecured = isSecuredInt != 0
 		if e.IsSecured {
+			// Access to secured values is governed by read access to the master key,
+			// not by the caller's euid.
 			decrypted, err := crypto.Decrypt(e.Value)
-			if err == nil {
+			if err != nil {
+				e.Value = ""
+				e.Locked = true
+			} else {
 				e.Value = decrypted
 			}
-			// If decryption fails, we leave the encrypted value in e.Value.
-			// The CLI/caller can then decide to mask it or show it as is.
 		}
 		envs = append(envs, e)
 	}

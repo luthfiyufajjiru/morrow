@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"morrow/internal/env"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -90,12 +89,11 @@ var ListEnvCmd = &cobra.Command{
 			log.Fatalf("Error: %v", err)
 		}
 		fmt.Printf("Environment variables for %s:\n", args[0])
-		isRoot := os.Geteuid() == 0
 		for _, e := range envs {
 			val := e.Value
 			status := ""
 			if e.IsSecured {
-				if !isRoot {
+				if e.Locked {
 					val = "****"
 				}
 				status = " [SECURED]"
