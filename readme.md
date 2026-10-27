@@ -137,18 +137,18 @@ morrow detail api
 +----------------------------+------------------------------------------+
 | Field                      | Value                                    |
 +----------------------------+------------------------------------------+
-| Application ID             | 1438888c-1a40-4658-a1a2-0469083b0493     |
+| Application ID             | 33abccf8-b237-400d-865e-1b214d1e849b     |
 | Application Name           | api                                      |
 | Executable Path            | /tmp/demo/bin/demo-api                   |
 | Arguments                  | --port 8080                              |
 | Working Directory          | /tmp/demo/api                            |
 | Full Command               | API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080 |
 | Status                     | running                                  |
-| PID                        | 288                                      |
-| Creation Time              | 2026-10-27T09:24:24Z                     |
-| Update Time                | 2026-10-27T09:24:27Z                     |
-| Status Time                | 2026-10-27T09:24:27Z                     |
-| Last Run Time              | 2026-10-27T09:24:27Z                     |
+| PID                        | 298                                      |
+| Creation Time              | 2026-10-27T09:57:41Z                     |
+| Update Time                | 2026-10-27T09:57:44Z                     |
+| Status Time                | 2026-10-27T09:57:44Z                     |
+| Last Run Time              | 2026-10-27T09:57:44Z                     |
 +----------------------------+------------------------------------------+
 ```
 
@@ -161,7 +161,7 @@ morrow detail api --json
 **Result:**
 ```json
 {
-  "application_id": "1438888c-1a40-4658-a1a2-0469083b0493",
+  "application_id": "33abccf8-b237-400d-865e-1b214d1e849b",
   "application_name": "api",
   "application_executable_path": "/tmp/demo/bin/demo-api",
   "application_arguments": [
@@ -174,11 +174,11 @@ morrow detail api --json
     "LOG_LEVEL": "info"
   },
   "application_status": "running",
-  "application_pid": 288,
-  "application_creation_time": "2026-10-27T09:24:24Z",
-  "application_update_time": "2026-10-27T09:24:27Z",
-  "application_status_time": "2026-10-27T09:24:27Z",
-  "application_last_run_time": "2026-10-27T09:24:27Z",
+  "application_pid": 298,
+  "application_creation_time": "2026-10-27T09:57:41Z",
+  "application_update_time": "2026-10-27T09:57:44Z",
+  "application_status_time": "2026-10-27T09:57:44Z",
+  "application_last_run_time": "2026-10-27T09:57:44Z",
   "application_command_line": "API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080"
 }
 ```
@@ -234,6 +234,8 @@ This ensures high availability and reliable log capture without requiring a heav
 
 ## Access for pipelines (write-only secrets)
 A non-admin account, such as a CI/CD pipeline, can set granted secrets without being able to read any secret:
+
+![morrow write-only secrets: enable the inbox, grant ci API_TOKEN, ci submits a token it cannot read back, an admin applies it](doc/assets/pipeline-secrets.gif)
 
 ```bash
 # Admin, once
