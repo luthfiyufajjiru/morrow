@@ -1,5 +1,7 @@
 # Morrow: Simple Cross Platform Process Manager
 
+> New here? The **[tutorial and FAQ](doc/tutorial.md)** covers every command, the permission model, pipelines and troubleshooting.
+
 ## Getting Started
 
 ### 1. Building from Source
@@ -90,7 +92,7 @@ morrow list
 ## Command List
 | Descriptions | Commands |
 | --- | --- |
-| Initialize Morrow (sudo / Administrator, unless `MORROW_HOME` is set) | `morrow init [--force]` |
+| Initialize Morrow (sudo / Administrator, unless `MORROW_HOME` is set) | `morrow init [--force] [--enable-inbox]` |
 | Set environment variable | `morrow set-env <app-name> <key=value> [key2=value2]...` |
 | Get environment variable | `morrow get-env <app-name> <env-name>` |
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
@@ -105,6 +107,12 @@ morrow list
 | Get Application Status | `morrow status <app-name>` |
 | Get Application Detail | `morrow detail <app-name>` |
 | Get Application Logs | `morrow logs <app-name>` |
+| Grant a user write-only secrets (admin) | `morrow grant <user> --app <app> --vars <NAME,...> [--format token]` |
+| Revoke grants (admin) | `morrow revoke <user> --app <app> [--vars <NAME,...>]` |
+| List grants | `morrow grants` |
+| Submit write-only secrets (no admin, needs a grant) | `morrow submit-env <app> <KEY[=VALUE]>... [--restart]` |
+| Store submitted secrets (admin; normally automatic) | `morrow apply` |
+| Show submission outcomes (never values) | `morrow inbox` |
 
 ## Detail Application Example
 By default, this command outputs a human-readable table. Use the `--json` flag for programmatic integration. Secured variables are always shown as `****` here; the real value is only passed to the process.
@@ -129,18 +137,18 @@ morrow detail api
 +----------------------------+------------------------------------------+
 | Field                      | Value                                    |
 +----------------------------+------------------------------------------+
-| Application ID             | 1438888c-1a40-4658-a1a2-0469083b0493     |
+| Application ID             | 33abccf8-b237-400d-865e-1b214d1e849b     |
 | Application Name           | api                                      |
 | Executable Path            | /tmp/demo/bin/demo-api                   |
 | Arguments                  | --port 8080                              |
 | Working Directory          | /tmp/demo/api                            |
 | Full Command               | API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080 |
 | Status                     | running                                  |
-| PID                        | 288                                      |
-| Creation Time              | 2026-10-27T09:24:24Z                     |
-| Update Time                | 2026-10-27T09:24:27Z                     |
-| Status Time                | 2026-10-27T09:24:27Z                     |
-| Last Run Time              | 2026-10-27T09:24:27Z                     |
+| PID                        | 298                                      |
+| Creation Time              | 2026-10-27T09:57:41Z                     |
+| Update Time                | 2026-10-27T09:57:44Z                     |
+| Status Time                | 2026-10-27T09:57:44Z                     |
+| Last Run Time              | 2026-10-27T09:57:44Z                     |
 +----------------------------+------------------------------------------+
 ```
 
@@ -153,7 +161,7 @@ morrow detail api --json
 **Result:**
 ```json
 {
-  "application_id": "1438888c-1a40-4658-a1a2-0469083b0493",
+  "application_id": "33abccf8-b237-400d-865e-1b214d1e849b",
   "application_name": "api",
   "application_executable_path": "/tmp/demo/bin/demo-api",
   "application_arguments": [
@@ -166,11 +174,11 @@ morrow detail api --json
     "LOG_LEVEL": "info"
   },
   "application_status": "running",
-  "application_pid": 288,
-  "application_creation_time": "2026-10-27T09:24:24Z",
-  "application_update_time": "2026-10-27T09:24:27Z",
-  "application_status_time": "2026-10-27T09:24:27Z",
-  "application_last_run_time": "2026-10-27T09:24:27Z",
+  "application_pid": 298,
+  "application_creation_time": "2026-10-27T09:57:41Z",
+  "application_update_time": "2026-10-27T09:57:44Z",
+  "application_status_time": "2026-10-27T09:57:44Z",
+  "application_last_run_time": "2026-10-27T09:57:44Z",
   "application_command_line": "API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080"
 }
 ```
@@ -223,6 +231,24 @@ When an application is started:
 4. **State Sync**: The relay continuously synchronizes the application's status (running, stopped, crashed) with the Morrow database.
 
 This ensures high availability and reliable log capture without requiring a heavy daemon to be running constantly in the background.
+
+## Access for pipelines (write-only secrets)
+A non-admin account, such as a CI/CD pipeline, can set granted secrets without being able to read any secret:
+
+![morrow write-only secrets: enable the inbox, grant ci API_TOKEN, ci submits a token it cannot read back, an admin applies it](doc/assets/pipeline-secrets.gif)
+
+```bash
+# Admin, once
+sudo morrow init --enable-inbox                       # inbox, key pair, 'morrow-deploy' group, auto-apply hook
+sudo usermod -aG morrow-deploy ci                     # Windows: net localgroup "Morrow Deployers" ci /add
+sudo morrow grant ci --app api --vars API_TOKEN       # default format: token
+
+# Pipeline (no sudo): the value is read from its own environment and sealed
+API_TOKEN="$CI_API_TOKEN" morrow submit-env api API_TOKEN --restart
+morrow inbox                                         # outcome, never the value
+```
+
+The pipeline seals each value with the install's public key and drops it into a folder it can write but not read. `morrow apply`, run by a systemd unit (Linux) or scheduled task (Windows), checks the file's owner against the grants, rejects names that make programs load code (`PATH`, `LD_*`, `NODE_OPTIONS`, ...), enforces the granted value format, and stores the value. Apps still run as root/Administrator, so grant only data-like variables with the strictest format; see the [tutorial](doc/tutorial.md#5-let-a-pipeline-set-secrets-it-cannot-read) and [ADR 0003](doc/adr/0003-write-only-secrets-inbox.md) for the full model and its limits.
 
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 

@@ -148,3 +148,27 @@ func GetLogFilePath(appName string) string {
 func GetRelayPIDFilePath(appName string) string {
 	return filepath.Join(GetLogsDir(), fmt.Sprintf("%s.relay.pid", appName))
 }
+
+// Inbox paths for write-only secret submission (system installs only). The
+// public key and the inbox live beside the database, where regular users can
+// reach them; the private key lives beside the master key.
+const (
+	inboxDir        = "inbox"
+	inboxPublicKey  = "inbox.pub"
+	inboxPrivateKey = ".morrow-inbox.key"
+)
+
+// GetInboxDir returns the directory deployers drop sealed submissions into.
+func GetInboxDir() string {
+	return filepath.Join(filepath.Dir(Current().DBPath), inboxDir)
+}
+
+// GetInboxPublicKeyPath returns the world-readable key used to seal submissions.
+func GetInboxPublicKeyPath() string {
+	return filepath.Join(filepath.Dir(Current().DBPath), inboxPublicKey)
+}
+
+// GetInboxPrivateKeyPath returns the root/Administrator-only key that opens submissions.
+func GetInboxPrivateKeyPath() string {
+	return filepath.Join(filepath.Dir(Current().KeyPath), inboxPrivateKey)
+}
