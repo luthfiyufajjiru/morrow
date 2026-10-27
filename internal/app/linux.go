@@ -18,6 +18,17 @@ func terminateProcess(pid int) error {
 	return proc.Signal(syscall.SIGTERM)
 }
 
+// isProcessAlive reports whether a process with this PID exists. Signal 0
+// performs only the existence/permission check; EPERM means it exists but
+// belongs to another user.
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
+}
+
 // detachProcess creates a new session for the managed app process,
 // making it immune to terminal SIGHUP.
 func detachProcess(cmd *exec.Cmd) {

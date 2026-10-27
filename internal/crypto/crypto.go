@@ -9,8 +9,16 @@ import (
 	"fmt"
 	"io"
 	"morrow/internal/config"
+	"morrow/internal/privilege"
 	"os"
 )
+
+// MasterKeyMissing reports whether the key file does not exist. Other stat
+// errors (e.g. permission denied) count as present: the key may well exist.
+func MasterKeyMissing() bool {
+	_, err := os.Stat(config.GetKeyPath())
+	return errors.Is(err, os.ErrNotExist)
+}
 
 func getMasterKey() ([]byte, error) {
 	key, err := os.ReadFile(config.GetKeyPath())
@@ -23,9 +31,13 @@ func getMasterKey() ([]byte, error) {
 	return key, nil
 }
 
+// InitMasterKey creates the master key if needed and (re)applies its access
+// restrictions, so re-running init also repairs keys from older installs.
 func InitMasterKey() error {
-	_, err := ensureMasterKey()
-	return err
+	if _, err := ensureMasterKey(); err != nil {
+		return err
+	}
+	return privilege.RestrictKeyFile(config.GetKeyPath(), config.IsPerUser())
 }
 
 func ensureMasterKey() ([]byte, error) {
@@ -44,17 +56,30 @@ func ensureMasterKey() ([]byte, error) {
 		if err := os.WriteFile(config.GetKeyPath(), key, 0600); err != nil {
 			return nil, fmt.Errorf("failed to save master key to %s: %w", config.GetKeyPath(), err)
 		}
+		if err := privilege.RestrictKeyFile(config.GetKeyPath(), config.IsPerUser()); err != nil {
+			_ = os.Remove(config.GetKeyPath())
+			return nil, err
+		}
 		return key, nil
 	}
 
 	return nil, fmt.Errorf("failed to load master key: %w", err)
 }
 
-// Encrypt strings to base64 using AES-GCM
+// ErrNoMasterKey means the key file does not exist. Only `morrow init` creates
+// it: generating one anywhere else would silently orphan every value already
+// encrypted with the old key (e.g. after a deleted file or wrong MORROW_KEY_PATH).
+var ErrNoMasterKey = errors.New("master key not found")
+
+// Encrypt strings to base64 using AES-GCM. It never creates the master key.
 func Encrypt(text string) (string, error) {
-	key, err := ensureMasterKey()
+	key, err := getMasterKey()
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%w at %s: run 'morrow init' to create it. If secured values already exist, "+
+			"restore the original key file instead; a new key cannot decrypt them", ErrNoMasterKey, config.GetKeyPath())
+	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to load master key: %w", err)
 	}
 
 	block, err := aes.NewCipher(key)

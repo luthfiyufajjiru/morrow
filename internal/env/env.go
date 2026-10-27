@@ -11,6 +11,9 @@ type EnvVar struct {
 	Name      string
 	Value     string
 	IsSecured bool
+	// Locked is true when the variable is secured but the caller cannot read the
+	// master key. Value is empty in that case.
+	Locked bool
 }
 
 func appExists(name string) (string, error) {
@@ -74,9 +77,7 @@ func GetEnv(appName string, key string) (string, bool, error) {
 	if isSecured {
 		decrypted, err := crypto.Decrypt(value)
 		if err != nil {
-			// If decryption fails (e.g. missing key), return the encrypted value and the secured flag.
-			// This allows the caller/daemon to handle the failure gracefully.
-			return value, true, nil
+			return "", true, fmt.Errorf("cannot decrypt secured variable %s: %w", key, err)
 		}
 		return decrypted, true, nil
 	}
@@ -131,14 +132,58 @@ func ListEnv(appName string) ([]EnvVar, error) {
 		}
 		e.IsSecured = isSecuredInt != 0
 		if e.IsSecured {
+			// Access to secured values is governed by read access to the master key,
+			// not by the caller's euid.
 			decrypted, err := crypto.Decrypt(e.Value)
-			if err == nil {
+			if err != nil {
+				e.Value = ""
+				e.Locked = true
+			} else {
 				e.Value = decrypted
 			}
-			// If decryption fails, we leave the encrypted value in e.Value.
-			// The CLI/caller can then decide to mask it or show it as is.
 		}
 		envs = append(envs, e)
 	}
 	return envs, nil
+}
+
+// SecuredRef identifies one secured variable without its value.
+type SecuredRef struct {
+	App  string
+	Name string
+}
+
+// ListSecured returns every secured variable across all applications, in
+// stable order. Used by init to detect values a new master key could not decrypt.
+func ListSecured() ([]SecuredRef, error) {
+	rows, err := db.DB.Query(`
+		SELECT applications.application_name, env_name FROM application_environment_variables
+		JOIN applications ON application_environment_variables.application_id = applications.application_id
+		WHERE env_is_secured = 1
+		ORDER BY applications.application_name, env_name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var refs []SecuredRef
+	for rows.Next() {
+		var r SecuredRef
+		if err := rows.Scan(&r.App, &r.Name); err != nil {
+			return nil, err
+		}
+		refs = append(refs, r)
+	}
+	return refs, rows.Err()
+}
+
+// DeleteSecured removes every secured variable. Only meant for `init --force`
+// after the master key is lost, when those values can never be decrypted again.
+func DeleteSecured() (int64, error) {
+	res, err := db.DB.Exec("DELETE FROM application_environment_variables WHERE env_is_secured = 1")
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

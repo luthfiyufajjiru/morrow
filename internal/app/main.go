@@ -3,12 +3,15 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"morrow/internal/config"
 	"morrow/internal/db"
 	"morrow/internal/env"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +24,7 @@ type Application struct {
 	Name                 string            `json:"application_name"`
 	ExecutablePath       string            `json:"application_executable_path"`
 	Arguments            []string          `json:"application_arguments"`
+	WorkingDir           string            `json:"application_working_directory,omitempty"`
 	EnvironmentVariables map[string]string `json:"application_environment_variables"`
 	Status               string            `json:"application_status"`
 	PID                  int               `json:"application_pid"`
@@ -39,13 +43,14 @@ func GetAppDetail(name string) (*Application, error) {
 	var lastRunTimeStr sql.NullString
 
 	err := db.DB.QueryRow(`
-		SELECT application_id, application_name, application_executable_path, application_arguments, 
-		       application_status, application_pid, application_creation_time, application_update_time,
+		SELECT application_id, application_name, application_executable_path, application_arguments,
+		       application_working_directory, application_status, application_pid,
+		       application_creation_time, application_update_time,
 		       application_status_time, application_last_run_time
 		FROM applications WHERE application_name = ?
 	`, name).Scan(
 		&app.ID, &app.Name, &app.ExecutablePath, &argsJSON,
-		&app.Status, &app.PID, &creationTimeStr, &updateTimeStr,
+		&app.WorkingDir, &app.Status, &app.PID, &creationTimeStr, &updateTimeStr,
 		&statusTimeStr, &lastRunTimeStr,
 	)
 
@@ -55,6 +60,7 @@ func GetAppDetail(name string) (*Application, error) {
 		}
 		return nil, err
 	}
+	app.Status, app.PID = reconcileStatus(name, app.Status, app.PID)
 
 	// Parse arguments
 	if err := json.Unmarshal([]byte(argsJSON), &app.Arguments); err != nil {
@@ -83,37 +89,91 @@ func GetAppDetail(name string) (*Application, error) {
 		app.LastRunTime = &lr
 	}
 
-	// Fetch environment variables
+	// Fetch environment variables. Secured values are always masked here because
+	// the detail view is display-only; StartApp resolves real values separately.
 	envs, err := env.ListEnv(name)
 	if err != nil {
 		return nil, err
 	}
 
-	isRoot := os.Geteuid() == 0 || os.Geteuid() == -1
-
 	app.EnvironmentVariables = make(map[string]string)
+	envNames := make([]string, 0, len(envs))
 	for _, e := range envs {
 		val := e.Value
-		if e.IsSecured && !isRoot {
-			val = "****"
+		if e.IsSecured {
+			val = maskedValue
 		}
 		app.EnvironmentVariables[e.Name] = val
+		envNames = append(envNames, e.Name)
 	}
+	sort.Strings(envNames)
 
 	// Generate the CommandLine string
-	envPairs := ""
-	for k, v := range app.EnvironmentVariables {
-		envPairs += fmt.Sprintf("%s=%s ", k, v)
+	var cmdLine strings.Builder
+	for _, k := range envNames {
+		fmt.Fprintf(&cmdLine, "%s=%s ", k, app.EnvironmentVariables[k])
 	}
-	app.CommandLine = fmt.Sprintf("%s%s %s", envPairs, app.ExecutablePath, strings.Join(app.Arguments, " "))
+	cmdLine.WriteString(app.ExecutablePath)
+	if len(app.Arguments) > 0 {
+		cmdLine.WriteString(" " + strings.Join(app.Arguments, " "))
+	}
+	app.CommandLine = cmdLine.String()
 
 	return &app, nil
 }
 
+const maskedValue = "****"
+
+// ErrNotRunning is returned by StopApp for an app that is not running.
+var ErrNotRunning = errors.New("is not running")
+
+// reconcileStatus treats a "running" app whose PID no longer exists (crash
+// without relay, reboot, killed relay) as stopped, and persists that so later
+// commands never signal a PID the OS may have reused. The write is best
+// effort: callers without write access still get the corrected view.
+func reconcileStatus(name string, status string, pid int) (string, int) {
+	if status != "running" || isProcessAlive(pid) {
+		return status, pid
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_, _ = db.DB.Exec(`
+		UPDATE applications
+		SET application_status = 'stopped', application_pid = 0,
+		    application_status_time = ?, application_update_time = ?
+		WHERE application_name = ? AND application_status = 'running' AND application_pid = ?
+	`, now, now, name, pid)
+	return "stopped", 0
+}
+
+// resolveWorkingDir converts a user-supplied working directory to an absolute
+// path and checks that it is an existing directory. Empty means "inherit".
+func resolveWorkingDir(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("invalid working directory %s: %w", dir, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("invalid working directory %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("working directory %s is not a directory", dir)
+	}
+	return abs, nil
+}
+
 // CreateApp initializes a new managed application.
-func CreateApp(name string, execPath string, args []string) error {
+func CreateApp(name string, execPath string, args []string, workDir string) error {
+	workDir, err := resolveWorkingDir(workDir)
+	if err != nil {
+		return err
+	}
+
 	var count int
-	err := db.DB.QueryRow("SELECT count(*) FROM applications WHERE application_name = ?", name).Scan(&count)
+	err = db.DB.QueryRow("SELECT count(*) FROM applications WHERE application_name = ?", name).Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -126,11 +186,11 @@ func CreateApp(name string, execPath string, args []string) error {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
 	_, err = db.DB.Exec(`
-		INSERT INTO applications (application_id, application_name, application_executable_path, application_arguments, 
-		                         application_status, application_creation_time, application_update_time)
-		VALUES (?, ?, ?, ?, 'stopped', ?, ?)
-	`, appID, name, execPath, string(argsJSON), now, now)
-	
+		INSERT INTO applications (application_id, application_name, application_executable_path, application_arguments,
+		                         application_working_directory, application_status, application_creation_time, application_update_time)
+		VALUES (?, ?, ?, ?, ?, 'stopped', ?, ?)
+	`, appID, name, execPath, string(argsJSON), workDir, now, now)
+
 	return err
 }
 
@@ -138,6 +198,29 @@ func CreateApp(name string, execPath string, args []string) error {
 func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 	app, err := GetAppDetail(name)
 	if err != nil {
+		return 0, err
+	}
+	if app.Status == "running" && app.PID != 0 {
+		return 0, fmt.Errorf("application %s is already running with PID %d", name, app.PID)
+	}
+
+	// Resolve env values before spawning anything. Secured values need read
+	// access to the master key; no root/admin check is involved.
+	envs, err := env.ListEnv(name)
+	if err != nil {
+		return 0, err
+	}
+	for _, e := range envs {
+		if e.Locked {
+			return 0, fmt.Errorf("cannot decrypt secured variable %s: no read access to the master key", e.Name)
+		}
+	}
+
+	// Make sure the status update at the end can succeed before spawning
+	// anything; otherwise a caller without write access would leave an
+	// untracked relay and app running. The no-op UPDATE still needs a write
+	// lock, so a read-only database fails here.
+	if _, err := db.DB.Exec(`UPDATE applications SET application_update_time = application_update_time WHERE application_name = ?`, name); err != nil {
 		return 0, err
 	}
 
@@ -164,25 +247,18 @@ func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 	pipeR.Close() // parent's copy of read end is no longer needed
 
 	// Save relay PID so StopApp can kill it later.
-	_ = os.WriteFile(
-		config.GetRelayPIDFilePath(name),
-		[]byte(strconv.Itoa(relayPID)),
-		0644,
-	)
+	relayPIDFile := config.GetRelayPIDFilePath(name)
+	_ = os.WriteFile(relayPIDFile, []byte(strconv.Itoa(relayPID)), 0644)
 
 	// Launch the managed app, writing stdout/stderr into the pipe.
 	cmd := exec.Command(app.ExecutablePath, app.Arguments...)
+	cmd.Dir = app.WorkingDir
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_ID=%s", app.ID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("MORROW_APP_NAME=%s", app.Name))
 
-	for k, v := range app.EnvironmentVariables {
-		if v == "****" {
-			pipeW.Close()
-			terminateProcess(relayPID)
-			return 0, fmt.Errorf("cannot start app with secured variables as a non-root user")
-		}
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	for _, e := range envs {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
 	}
 	for k, v := range inlineEnvs {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -194,7 +270,8 @@ func StartApp(name string, inlineEnvs map[string]string) (int, error) {
 
 	if err := cmd.Start(); err != nil {
 		pipeW.Close()
-		terminateProcess(relayPID)
+		_ = terminateProcess(relayPID)
+		_ = os.Remove(relayPIDFile)
 		return 0, fmt.Errorf("failed to start process: %w", err)
 	}
 	pipeW.Close() // parent's copy of write end is no longer needed
@@ -220,11 +297,14 @@ func StopApp(name string) error {
 	}
 
 	if app.Status != "running" || app.PID == 0 {
-		return fmt.Errorf("application %s is not running", name)
+		return fmt.Errorf("application %s %w", name, ErrNotRunning)
 	}
 
-	// Call platform-specific termination logic
-	_ = terminateProcess(app.PID)
+	// Call platform-specific termination logic. A failure while the process is
+	// still alive (typically another user's process) must not be recorded as stopped.
+	if err := terminateProcess(app.PID); err != nil && isProcessAlive(app.PID) {
+		return fmt.Errorf("failed to stop process %d: %w", app.PID, err)
+	}
 
 	// Kill the log relay sidecar if it is still running.
 	relayPIDFile := config.GetRelayPIDFilePath(name)
@@ -246,9 +326,13 @@ func StopApp(name string) error {
 	return err
 }
 
-// RestartApp stops and then starts an application.
+// RestartApp stops and then starts an application. An app that is not running
+// is simply started; any other stop failure (e.g. missing permissions) is
+// returned instead of being masked by a later "already running" error.
 func RestartApp(name string) (int, error) {
-	_ = StopApp(name)
+	if err := StopApp(name); err != nil && !errors.Is(err, ErrNotRunning) {
+		return 0, err
+	}
 	return StartApp(name, nil)
 }
 
@@ -273,7 +357,7 @@ func DeleteApp(name string, force bool) error {
 
 	_, _ = tx.Exec("DELETE FROM application_environment_variables WHERE application_id = ?", app.ID)
 	_, err = tx.Exec("DELETE FROM applications WHERE application_id = ?", app.ID)
-	
+
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -303,18 +387,42 @@ func ListApps() ([]Application, error) {
 		_ = json.Unmarshal([]byte(argsJSON), &app.Arguments)
 		apps = append(apps, app)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // release the read before reconcileStatus may write
+	for i := range apps {
+		apps[i].Status, apps[i].PID = reconcileStatus(apps[i].Name, apps[i].Status, apps[i].PID)
+	}
 	return apps, nil
 }
 
-func UpdateApp(name string, execPath string, args []string) error {
+// UpdateApp replaces an application's executable and arguments. A nil workDir
+// keeps the current working directory; a pointer to "" clears it.
+func UpdateApp(name string, execPath string, args []string, workDir *string) error {
 	argsJSON, _ := json.Marshal(args)
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
-	res, err := db.DB.Exec(`
-		UPDATE applications
-		SET application_executable_path = ?, application_arguments = ?, application_update_time = ?
-		WHERE application_name = ?
-	`, execPath, string(argsJSON), now, name)
+	var res sql.Result
+	var err error
+	if workDir == nil {
+		res, err = db.DB.Exec(`
+			UPDATE applications
+			SET application_executable_path = ?, application_arguments = ?, application_update_time = ?
+			WHERE application_name = ?
+		`, execPath, string(argsJSON), now, name)
+	} else {
+		dir, dirErr := resolveWorkingDir(*workDir)
+		if dirErr != nil {
+			return dirErr
+		}
+		res, err = db.DB.Exec(`
+			UPDATE applications
+			SET application_executable_path = ?, application_arguments = ?, application_working_directory = ?,
+			    application_update_time = ?
+			WHERE application_name = ?
+		`, execPath, string(argsJSON), dir, now, name)
+	}
 	if err != nil {
 		return err
 	}
@@ -335,5 +443,6 @@ func GetAppStatus(name string) (string, int, error) {
 		}
 		return "", 0, err
 	}
+	status, pid = reconcileStatus(name, status, pid)
 	return status, pid, nil
 }

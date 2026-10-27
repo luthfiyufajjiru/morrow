@@ -1,12 +1,14 @@
 package app
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"morrow/internal/app"
 	"morrow/internal/config"
+	"morrow/internal/privilege"
 	"os"
 	"strings"
 	"time"
@@ -18,9 +20,10 @@ import (
 var jsonOutput bool
 var inlineEnvs []string
 var forceDelete bool
+var workDir string
 
 var CreateAppCmd = &cobra.Command{
-	Use:   "create [app-name] [executable-path] [args...]",
+	Use:   "create [flags] [app-name] [executable-path] [args...]",
 	Short: "Create a new managed application",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -31,8 +34,8 @@ var CreateAppCmd = &cobra.Command{
 			appArgs = args[2:]
 		}
 
-		if err := app.CreateApp(name, execPath, appArgs); err != nil {
-			log.Fatalf("Error: %v", err)
+		if err := app.CreateApp(name, execPath, appArgs, workDir); err != nil {
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Successfully created application %s\n", name)
 	},
@@ -46,7 +49,7 @@ var DetailAppCmd = &cobra.Command{
 		name := args[0]
 		detail, err := app.GetAppDetail(name)
 		if err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 
 		if jsonOutput {
@@ -63,6 +66,7 @@ var DetailAppCmd = &cobra.Command{
 		fmt.Printf("| %-26s | %-40s |\n", "Application Name", detail.Name)
 		fmt.Printf("| %-26s | %-40s |\n", "Executable Path", detail.ExecutablePath)
 		fmt.Printf("| %-26s | %-40s |\n", "Arguments", strings.Join(detail.Arguments, " "))
+		fmt.Printf("| %-26s | %-40s |\n", "Working Directory", detail.WorkingDir)
 		fmt.Printf("| %-26s | %-40s |\n", "Full Command", detail.CommandLine)
 		fmt.Printf("| %-26s | %-40s |\n", "Status", detail.Status)
 		fmt.Printf("| %-26s | %-40d |\n", "PID", detail.PID)
@@ -94,7 +98,7 @@ var StartAppCmd = &cobra.Command{
 
 		pid, err := app.StartApp(name, envs)
 		if err != nil {
-			log.Fatalf("Error starting app %s: %v", name, err)
+			log.Fatalf("Error starting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully started application %s with PID %d\n", name, pid)
 	},
@@ -107,7 +111,7 @@ var StopAppCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 		if err := app.StopApp(name); err != nil {
-			log.Fatalf("Error stopping app %s: %v", name, err)
+			log.Fatalf("Error stopping app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully stopped application %s\n", name)
 	},
@@ -121,7 +125,7 @@ var RestartAppCmd = &cobra.Command{
 		name := args[0]
 		pid, err := app.RestartApp(name)
 		if err != nil {
-			log.Fatalf("Error restarting app %s: %v", name, err)
+			log.Fatalf("Error restarting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully restarted application %s with PID %d\n", name, pid)
 	},
@@ -134,7 +138,7 @@ var DeleteAppCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 		if err := app.DeleteApp(name, forceDelete); err != nil {
-			log.Fatalf("Error deleting app %s: %v", name, err)
+			log.Fatalf("Error deleting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully deleted application %s\n", name)
 	},
@@ -146,7 +150,7 @@ var ListAppsCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		apps, err := app.ListApps()
 		if err != nil {
-			log.Fatalf("Error listing apps: %v", err)
+			log.Fatalf("Error listing apps: %v", privilege.Hint(err))
 		}
 		if len(apps) == 0 {
 			fmt.Println("No applications managed by Morrow.")
@@ -169,14 +173,14 @@ var StatusAppCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		status, pid, err := app.GetAppStatus(args[0])
 		if err != nil {
-			log.Fatalf("Error: %v", err)
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Application: %s\nStatus: %s\nPID: %d\n", args[0], status, pid)
 	},
 }
 
 var UpdateAppCmd = &cobra.Command{
-	Use:   "update [app-name] [executable-path] [args...]",
+	Use:   "update [flags] [app-name] [executable-path] [args...]",
 	Short: "Update an application's configuration",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -186,8 +190,12 @@ var UpdateAppCmd = &cobra.Command{
 		if len(args) > 2 {
 			appArgs = args[2:]
 		}
-		if err := app.UpdateApp(name, execPath, appArgs); err != nil {
-			log.Fatalf("Error: %v", err)
+		var dir *string
+		if cmd.Flags().Changed("workdir") {
+			dir = &workDir
+		}
+		if err := app.UpdateApp(name, execPath, appArgs, dir); err != nil {
+			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Successfully updated application %s\n", name)
 	},
@@ -204,18 +212,20 @@ var LogsAppCmd = &cobra.Command{
 		appName := args[0]
 		logPath := config.GetLogFilePath(appName)
 
-		f, err := os.Open(logPath)
-		if err != nil {
+		data, err := os.ReadFile(logPath)
+		if errors.Is(err, os.ErrNotExist) {
 			log.Fatalf("No logs found for %s (has it been started?)", appName)
 		}
-
-		// Read entire file to memory for simple tailing (standard behavior)
-		var lines []string
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
+		if err != nil {
+			log.Fatalf("Error reading logs: %v", privilege.Hint(err))
 		}
-		f.Close()
+
+		// Split in memory: unlike bufio.Scanner this has no per-line length limit.
+		content := strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+		var lines []string
+		if content != "" {
+			lines = strings.Split(content, "\n")
+		}
 
 		start := 0
 		if logsLines > 0 && len(lines) > logsLines {
@@ -234,11 +244,12 @@ var LogsAppCmd = &cobra.Command{
 				ReOpen:    true, // Auto reopen if lumberjack rotates it
 				MustExist: true,
 				Poll:      true, // fsnotify often hangs on Windows when another process writes
-				Location:  &tail.SeekInfo{Offset: 0, Whence: os.SEEK_END},
-				Logger:    tail.DiscardingLogger,
+				// Resume exactly where the initial read stopped so no lines are lost in between.
+				Location: &tail.SeekInfo{Offset: int64(len(data)), Whence: io.SeekStart},
+				Logger:   tail.DiscardingLogger,
 			})
 			if err != nil {
-				log.Fatalf("Failed to follow logs: %v", err)
+				log.Fatalf("Failed to follow logs: %v", privilege.Hint(err))
 			}
 			for line := range t.Lines {
 				fmt.Println(line.Text)
@@ -248,6 +259,12 @@ var LogsAppCmd = &cobra.Command{
 }
 
 func init() {
+	// Stop flag parsing at the first positional arg so app arguments such as
+	// "--port 8080" are passed through instead of rejected as unknown flags.
+	CreateAppCmd.Flags().SetInterspersed(false)
+	UpdateAppCmd.Flags().SetInterspersed(false)
+	CreateAppCmd.Flags().StringVarP(&workDir, "workdir", "w", "", "Working directory for the application")
+	UpdateAppCmd.Flags().StringVarP(&workDir, "workdir", "w", "", "Working directory for the application (empty string clears it)")
 	DetailAppCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	StartAppCmd.Flags().StringSliceVarP(&inlineEnvs, "env", "e", []string{}, "Inline environment variables (KEY=VALUE)")
 	DeleteAppCmd.Flags().BoolVarP(&forceDelete, "force", "f", false, "Force delete even if running (stops the app first)")

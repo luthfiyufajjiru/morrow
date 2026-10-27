@@ -19,6 +19,17 @@ func GetPath(filename string) string {
 	return filepath.Join(exeDir, filename)
 }
 
+// IsPerUser reports whether Morrow runs as a per-user install (MORROW_HOME
+// set) rather than a system install with data next to the binary.
+func IsPerUser() bool {
+	return os.Getenv("MORROW_HOME") != ""
+}
+
+// GetDataDir returns the directory holding the database, key and logs.
+func GetDataDir() string {
+	return filepath.Dir(GetPath("morrow.db"))
+}
+
 // GetDBPath returns the absolute path to the database file.
 func GetDBPath() string {
 	return GetPath("morrow.db")
