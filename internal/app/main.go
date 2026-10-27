@@ -36,6 +36,7 @@ type Application struct {
 	RestartPolicy        string            `json:"application_restart_policy"`
 	MaxRestarts          int               `json:"application_max_restarts"`
 	RestartCount         int               `json:"application_restart_count"`
+	DesiredState         string            `json:"application_desired_state"`
 }
 
 // GetAppDetail retrieves full information for a named application.
@@ -50,13 +51,15 @@ func GetAppDetail(name string) (*Application, error) {
 		       application_working_directory, application_status, application_pid,
 		       application_creation_time, application_update_time,
 		       application_status_time, application_last_run_time,
-		       application_restart_policy, application_max_restarts, application_restart_count
+		       application_restart_policy, application_max_restarts, application_restart_count,
+		       application_desired_state
 		FROM applications WHERE application_name = ?
 	`, name).Scan(
 		&app.ID, &app.Name, &app.ExecutablePath, &argsJSON,
 		&app.WorkingDir, &app.Status, &app.PID, &creationTimeStr, &updateTimeStr,
 		&statusTimeStr, &lastRunTimeStr,
 		&app.RestartPolicy, &app.MaxRestarts, &app.RestartCount,
+		&app.DesiredState,
 	)
 
 	if err != nil {
@@ -291,9 +294,11 @@ func startApp(name string, inlineEnvs map[string]string, resetCount bool) (int, 
 	_ = os.WriteFile(config.GetRelayPIDFilePath(name), []byte(strconv.Itoa(relayCmd.Process.Pid)), 0644)
 
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	// A start by the user (not an automatic restart) resets the restart
+	// counter and records that the app should be up, including after a reboot.
 	countSQL := ""
 	if resetCount {
-		countSQL = ", application_restart_count = 0"
+		countSQL = ", application_restart_count = 0, application_desired_state = 'up'"
 	}
 	_, err = db.DB.Exec(`
 		UPDATE applications
@@ -313,9 +318,26 @@ func StopApp(name string) error {
 // StopAppTimeout asks the app to exit, waits up to timeout, then kills it.
 // It returns once the process is gone and the app is recorded as stopped.
 func StopAppTimeout(name string, timeout time.Duration) error {
+	return stopApp(name, timeout, true)
+}
+
+// StopForShutdown stops the app like StopAppTimeout but keeps it wanted, so
+// it comes back at the next boot (system shutdown, uninstall).
+func StopForShutdown(name string, timeout time.Duration) error {
+	return stopApp(name, timeout, false)
+}
+
+func stopApp(name string, timeout time.Duration, byUser bool) error {
 	app, err := GetAppDetail(name)
 	if err != nil {
 		return err
+	}
+	// A stop by the user means "keep it down", even if it already exited.
+	// This also fails early, before any signal, without write access.
+	if byUser {
+		if _, err := db.DB.Exec("UPDATE applications SET application_desired_state = 'down' WHERE application_name = ?", name); err != nil {
+			return err
+		}
 	}
 
 	// Waiting to be restarted after a crash: cancel the restart.

@@ -32,6 +32,9 @@ func main() {
 		inbox.ApplyCmd,
 		inbox.InboxCmd,
 		cmd.UninstallCmd,
+		cmd.StartupCmd,
+		cmd.BootCmd,
+		cmd.ShutdownCmd,
 		relay.RelayCmd,
 	)
 	cmd.Execute()
