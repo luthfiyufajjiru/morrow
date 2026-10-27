@@ -14,9 +14,15 @@ import (
 
 var DB *sql.DB
 
+// busyTimeoutMs is how long a connection waits for another process's write
+// lock (e.g. a log relay marking its app stopped while `morrow stop` does the
+// same) before failing with SQLITE_BUSY.
+const busyTimeoutMs = 5000
+
 func InitDB(dbPath string) error {
 	var err error
-	DB, err = sql.Open("sqlite", dbPath)
+	// The pragma is applied to every pooled connection, not just the first.
+	DB, err = sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout(%d)", dbPath, busyTimeoutMs))
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}

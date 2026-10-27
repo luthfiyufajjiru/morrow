@@ -47,3 +47,20 @@ func ensureGroup(name string) (*windows.SID, error) {
 	sid, _, _, err = windows.LookupSID("", name)
 	return sid, err
 }
+
+// DeployGroupExists reports whether the deploy group exists.
+func DeployGroupExists() bool {
+	_, _, _, err := windows.LookupSID("", DeployGroup)
+	return err == nil
+}
+
+// RemoveDeployGroup deletes the deploy group. A missing group is not an error.
+func RemoveDeployGroup() error {
+	if !DeployGroupExists() {
+		return nil
+	}
+	if out, err := exec.Command("net", "localgroup", DeployGroup, "/delete").CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete local group %q (%v): %s", DeployGroup, err, out)
+	}
+	return nil
+}

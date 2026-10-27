@@ -52,3 +52,24 @@ func ensureGroup(name string) (int, error) {
 	}
 	return strconv.Atoi(g.Gid)
 }
+
+// DeployGroupExists reports whether the deploy group exists.
+func DeployGroupExists() bool {
+	_, err := user.LookupGroup(DeployGroup)
+	return err == nil
+}
+
+// RemoveDeployGroup deletes the deploy group. A missing group is not an error.
+func RemoveDeployGroup() error {
+	if !DeployGroupExists() {
+		return nil
+	}
+	cmd := exec.Command("groupdel", DeployGroup)
+	if runtime.GOOS == "darwin" {
+		cmd = exec.Command("dseditgroup", "-o", "delete", DeployGroup)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete group %s (%v): %s", DeployGroup, err, out)
+	}
+	return nil
+}

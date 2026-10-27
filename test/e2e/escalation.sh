@@ -25,7 +25,7 @@ NEWSECRET="e2einbox$(rand)"
 cleanup() {
   "$BIN/morrow" stop api >/dev/null 2>&1
   pkill -f "$BIN/demo-api" 2>/dev/null
-  rm -rf /etc/morrow /var/lib/morrow /var/log/morrow "$BIN" /tmp/morrow-e2e-user /tmp/morrow-e2e-link
+  rm -rf /etc/morrow /var/lib/morrow /var/log/morrow "$BIN" /tmp/morrow-e2e-user /tmp/morrow-e2e-link /tmp/morrow-e2e-key.bak
   groupdel morrow-deploy 2>/dev/null
 }
 trap cleanup EXIT
@@ -129,5 +129,32 @@ echo; echo "as $U after apply:"
 check deny "read the applied secret"               "$M get-env api API_TOKEN" "$HINT"
 check ok   "see outcomes in 'morrow inbox'"        "$M inbox" "applied"
 check ok   "outcomes show rejections, no values"   "$M inbox" "rejected"
+
+# --- Uninstall -----------------------------------------------------------------
+# pass_if <name> <shell condition run as root>
+pass_if() {
+  if sh -c "$2"; then pass=$((pass+1)); echo "PASS  $1"; else fail=$((fail+1)); echo "FAIL  $1"; fi
+}
+demo_running="ps -eo args= | grep -q '^$BIN/demo-api'"
+echo; echo "uninstall, as $U:"
+check deny "uninstall"                             "$M uninstall --yes" "requires elevation"
+check deny "uninstall --purge"                     "$M uninstall --purge --yes" "requires elevation"
+
+echo; echo "uninstall, as root:"
+$M uninstall --dry-run >/dev/null
+pass_if "--dry-run changes nothing" "$demo_running && [ -d $INBOX ] && [ -f /etc/morrow/.morrow.key ] && getent group morrow-deploy >/dev/null"
+printf 'n\n' | $M uninstall >/dev/null
+pass_if "answering 'n' changes nothing" "$demo_running && [ -d $INBOX ]"
+$M uninstall --yes >/dev/null
+pass_if "uninstall stops apps, removes inbox and group" "! $demo_running && [ ! -e $INBOX ] && [ ! -e /var/lib/morrow/inbox.pub ] && [ ! -e /etc/morrow/.morrow-inbox.key ] && ! getent group morrow-deploy >/dev/null"
+pass_if "...and keeps database, key and logs" "[ -f /var/lib/morrow/morrow.db ] && [ -f /etc/morrow/.morrow.key ] && [ -d /var/log/morrow ]"
+$M init >/dev/null
+pass_if "reinstall resumes with apps and secrets" "$M list | grep -q '| api ' && $M get-env api API_TOKEN | grep -q -- '$NEWSECRET'"
+$M start api >/dev/null
+printf 'yes\n' | $M uninstall --purge >/dev/null
+pass_if "purge refuses anything but the word 'purge'" "[ -f /etc/morrow/.morrow.key ] && $demo_running"
+$M uninstall --purge --yes --backup-key /tmp/morrow-e2e-key.bak >/dev/null
+pass_if "purge removes all data, stops apps" "[ ! -e /etc/morrow ] && [ ! -e /var/lib/morrow ] && [ ! -e /var/log/morrow ] && ! $demo_running"
+pass_if "...backs up the key, keeps the binary" "[ \$(wc -c < /tmp/morrow-e2e-key.bak) -eq 32 ] && [ -x $M ]"
 echo; echo "result: $pass passed, $fail failed"
 [ $fail -eq 0 ]

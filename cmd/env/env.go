@@ -3,6 +3,7 @@ package env
 import (
 	"fmt"
 	"log"
+	"morrow/cmd/complete"
 	"morrow/internal/env"
 	"morrow/internal/privilege"
 	"strings"
@@ -106,4 +107,11 @@ var ListEnvCmd = &cobra.Command{
 
 func init() {
 	SetEnvCmd.Flags().BoolVarP(&secured, "secured", "s", false, "Encrypt the environment variable")
+}
+
+func init() {
+	SetEnvCmd.ValidArgsFunction = complete.AppThenAssignments
+	GetEnvCmd.ValidArgsFunction = complete.AppThenEnv
+	DelEnvCmd.ValidArgsFunction = complete.AppThenEnv
+	ListEnvCmd.ValidArgsFunction = complete.App
 }

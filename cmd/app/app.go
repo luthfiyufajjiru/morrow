@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"morrow/cmd/complete"
 	"morrow/internal/app"
 	"morrow/internal/config"
 	"morrow/internal/privilege"
@@ -270,4 +271,15 @@ func init() {
 	DeleteAppCmd.Flags().BoolVarP(&forceDelete, "force", "f", false, "Force delete even if running (stops the app first)")
 	LogsAppCmd.Flags().IntVarP(&logsLines, "lines", "n", 50, "Number of recent lines to show (0 = all)")
 	LogsAppCmd.Flags().BoolVarP(&followLogs, "follow", "f", false, "Follow log output continuously")
+}
+
+func init() {
+	CreateAppCmd.ValidArgsFunction = complete.NewAppThenFiles
+	UpdateAppCmd.ValidArgsFunction = complete.AppThenFiles
+	for _, c := range []*cobra.Command{DetailAppCmd, StartAppCmd, StopAppCmd, RestartAppCmd, DeleteAppCmd, StatusAppCmd, LogsAppCmd} {
+		c.ValidArgsFunction = complete.App
+	}
+	ListAppsCmd.ValidArgsFunction = complete.None
+	_ = CreateAppCmd.MarkFlagDirname("workdir")
+	_ = UpdateAppCmd.MarkFlagDirname("workdir")
 }

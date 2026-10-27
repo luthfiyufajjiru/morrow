@@ -9,8 +9,9 @@ This guide walks through everything Morrow does, from the first `init` to lettin
 - [5. Let a pipeline set secrets it cannot read](#5-let-a-pipeline-set-secrets-it-cannot-read)
 - [6. Keys, backups and recovery](#6-keys-backups-and-recovery)
 - [7. Upgrading](#7-upgrading)
-- [8. Troubleshooting](#8-troubleshooting)
-- [9. FAQ](#9-faq)
+- [8. Uninstalling](#8-uninstalling)
+- [9. Troubleshooting](#9-troubleshooting)
+- [10. FAQ](#10-faq)
 
 ---
 
@@ -34,6 +35,24 @@ morrow init
 ```
 
 Running `init` again is safe: it keeps the existing key and re-applies file permissions.
+
+**Shell completion.** Tab completes commands, flags, app names and variable names (never values). Set it up once:
+
+```bash
+# bash (Linux)
+morrow completion bash | sudo tee /etc/bash_completion.d/morrow > /dev/null
+# zsh
+morrow completion zsh > "${fpath[1]}/_morrow"
+# fish
+morrow completion fish > ~/.config/fish/completions/morrow.fish
+```
+
+```powershell
+# PowerShell (Windows): add to your profile
+morrow completion powershell | Out-String | Invoke-Expression
+```
+
+Open a new shell afterwards. Completion works before `init` and for regular users; it only reads names from the database.
 
 ## 2. Run your first app
 
@@ -168,7 +187,28 @@ Only `morrow init` creates the master key. If it goes missing:
 
 Replace the binary and run `sudo morrow init` once. Database migrations run automatically on every command. Installs from before Morrow kept data in system folders (data next to the binary, e.g. `/usr/local/bin/morrow.db`) keep working from the old location until that `init`, which moves the database and key to the new folders and copies the logs. Restart running apps afterwards so they write to the new log folder, then delete the old `logs/`.
 
-## 8. Troubleshooting
+## 8. Uninstalling
+
+```bash
+sudo morrow uninstall --dry-run      # show what would happen, change nothing
+sudo morrow uninstall                # stop apps, remove the inbox; keep data
+sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
+```
+
+| | `uninstall` | `uninstall --purge` |
+| --- | --- | --- |
+| Stop every running app and its log relay | yes | yes |
+| Remove the inbox hook (systemd unit / scheduled task), inbox folder, inbox keys and deployers group | yes | yes |
+| Delete the database, master key and logs | no: reinstall and `morrow init` resume with your apps and secrets | yes |
+| Delete the morrow binary | no: it prints the path to delete, or uninstall the MSI/package | no |
+
+- It asks first: `y` for a plain uninstall; for `--purge` you must type `purge`, after it lists the secured variables that become unrecoverable. `--yes` skips the question (scripts); with no input it aborts.
+- `--backup-key <file>` copies the master key to a new file before purging. If the copy fails, nothing is deleted.
+- It only deletes Morrow's own files. A folder that may hold other things (`MORROW_HOME`, or the binary's folder for an old install) is removed only if it ends up empty.
+- If any app cannot be stopped, nothing is removed. It also refuses while `morrow apply` is running.
+- Regular users cannot uninstall a system install. In per-user mode (`MORROW_HOME`) it needs no sudo and only touches that folder.
+
+## 9. Troubleshooting
 
 | Message | Meaning / fix |
 | --- | --- |
@@ -185,7 +225,7 @@ Replace the binary and run `sudo morrow init` once. Database migrations run auto
 | `X can make programs run other code, so it cannot be granted` | That name is on the denylist by design. Use a different variable name in your app |
 | Submission shows `rejected` in `morrow inbox` | The reason is in the last column: format, grant, replay, file type, etc. |
 
-## 9. FAQ
+## 10. FAQ
 
 **Is Morrow like PM2?** It has PM2-style commands but no resident daemon and no Node.js. It is a single Go binary; each command runs and exits, and only a small log relay per app keeps running. It does not (yet) auto-restart crashed apps, start apps at boot, or run in cluster mode.
 
@@ -209,4 +249,6 @@ Replace the binary and run `sudo morrow init` once. Database migrations run auto
 
 **On Windows, who runs apps that `morrow apply --restart` restarts?** The scheduled task runs as SYSTEM, so apps it restarts run as SYSTEM. Apps you restart from an Administrator terminal run as you.
 
-**How do I remove the inbox?** Revoke the grants, then delete the inbox folder and `inbox.pub`, the private inbox key, the group, and the hook (`systemctl disable --now morrow-inbox.path` and delete `/etc/systemd/system/morrow-inbox.*`, or `schtasks /Delete /TN Morrow\Inbox /F`).
+**How do I remove the inbox, or Morrow entirely?** `sudo morrow uninstall` stops the apps and removes the inbox (hook, folder, keys, group) but keeps your data; add `--purge` to delete the data too (section 8). Grants stay in the database, so `sudo morrow init --enable-inbox` brings the inbox back as it was.
+
+**How do I move Morrow to another server?** Copy the database and the master key (keep the key private), install the binary, then run `sudo morrow init` on the new server: it keeps an existing key and re-applies its permissions.
