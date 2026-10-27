@@ -60,23 +60,23 @@ Re-running `init` on an existing install is safe: it keeps the key and re-applie
 ### 3. Basic Usage
 ![morrow quick start: init, create with a working directory, start, list and logs](doc/assets/quickstart.gif)
 
-Register a new application and start it:
+Register a new application and start it. On a system install, commands that change state need `sudo` (Windows: an Administrator terminal); read-only commands don't. In per-user mode (`MORROW_HOME`), drop the `sudo`.
 ```bash
 # Create the app (Morrow flags such as -w go before the app name;
 # everything after the executable is passed to the app as-is)
-./morrow create -w /path/to/workdir my-app /path/to/executable --port 8080
+sudo ./morrow create -w /path/to/workdir my-app /path/to/executable --port 8080
 
 # Start it
-./morrow start my-app
+sudo ./morrow start my-app
 
-# Check status
+# Check status (read-only, no sudo needed)
 ./morrow list
 ```
 
 ## Command List
 | Descriptions | Commands |
 | --- | --- |
-| Initialize Morrow | `morrow init` |
+| Initialize Morrow (sudo / Administrator, unless `MORROW_HOME` is set) | `morrow init` |
 | Set environment variable | `morrow set-env <app-name> <key=value> [key2=value2]...` |
 | Get environment variable | `morrow get-env <app-name> <env-name>` |
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
@@ -97,11 +97,11 @@ By default, this command outputs a human-readable table. Use the `--json` flag f
 
 ![morrow secured env vars: set-env with a secured value, restart, detail shows it masked, logs show the app received it](doc/assets/secured-env.gif)
 
-The outputs below are real, captured on Linux after:
+The outputs below are real, captured on Linux (system install; `detail` run as a regular user, without sudo) after:
 ```bash
-morrow create -w /tmp/demo/api api /tmp/demo/bin/demo-api --port 8080
-morrow set-env api API_TOKEN:s=s3cr3t-demo-token LOG_LEVEL=info
-morrow start api
+sudo ./morrow create -w /tmp/demo/api api /tmp/demo/bin/demo-api --port 8080
+sudo ./morrow set-env api API_TOKEN:s=s3cr3t-demo-token LOG_LEVEL=info
+sudo ./morrow start api
 ```
 
 ### Default Terminal Table
@@ -115,18 +115,18 @@ morrow detail api
 +----------------------------+------------------------------------------+
 | Field                      | Value                                    |
 +----------------------------+------------------------------------------+
-| Application ID             | 609e994d-4d0f-4ca1-866c-4585666dbafd     |
+| Application ID             | 98dcdf18-4ca2-4a74-9fd5-281b8d42e71e     |
 | Application Name           | api                                      |
 | Executable Path            | /tmp/demo/bin/demo-api                   |
 | Arguments                  | --port 8080                              |
 | Working Directory          | /tmp/demo/api                            |
 | Full Command               | API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080 |
 | Status                     | running                                  |
-| PID                        | 345                                      |
-| Creation Time              | 2026-10-27T08:28:44Z                     |
-| Update Time                | 2026-10-27T08:28:50Z                     |
-| Status Time                | 2026-10-27T08:28:50Z                     |
-| Last Run Time              | 2026-10-27T08:28:50Z                     |
+| PID                        | 302                                      |
+| Creation Time              | 2026-10-27T08:40:21Z                     |
+| Update Time                | 2026-10-27T08:40:24Z                     |
+| Status Time                | 2026-10-27T08:40:24Z                     |
+| Last Run Time              | 2026-10-27T08:40:24Z                     |
 +----------------------------+------------------------------------------+
 ```
 
@@ -139,7 +139,7 @@ morrow detail api --json
 **Result:**
 ```json
 {
-  "application_id": "609e994d-4d0f-4ca1-866c-4585666dbafd",
+  "application_id": "98dcdf18-4ca2-4a74-9fd5-281b8d42e71e",
   "application_name": "api",
   "application_executable_path": "/tmp/demo/bin/demo-api",
   "application_arguments": [
@@ -152,16 +152,18 @@ morrow detail api --json
     "LOG_LEVEL": "info"
   },
   "application_status": "running",
-  "application_pid": 345,
-  "application_creation_time": "2026-10-27T08:28:44Z",
-  "application_update_time": "2026-10-27T08:28:50Z",
-  "application_status_time": "2026-10-27T08:28:50Z",
-  "application_last_run_time": "2026-10-27T08:28:50Z",
+  "application_pid": 302,
+  "application_creation_time": "2026-10-27T08:40:21Z",
+  "application_update_time": "2026-10-27T08:40:24Z",
+  "application_status_time": "2026-10-27T08:40:24Z",
+  "application_last_run_time": "2026-10-27T08:40:24Z",
   "application_command_line": "API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080"
 }
 ```
 
 ## Example
+On a system install, prefix state-changing commands with `sudo` (Windows: run from an Administrator terminal). In per-user mode (`MORROW_HOME`), run them as-is.
+
 ### Python Application
 ```bash
 # Run from the project folder so relative paths (config, .env, venv assets) resolve
