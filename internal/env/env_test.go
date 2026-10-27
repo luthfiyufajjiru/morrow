@@ -1,9 +1,12 @@
 package env
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"morrow/internal/crypto"
 	"morrow/internal/db"
 )
 
@@ -18,6 +21,10 @@ func setupDB(t *testing.T) {
 	t.Cleanup(func() { db.DB.Close() })
 	if err := db.EnsureSchemaEmbedded(); err != nil {
 		t.Fatalf("EnsureSchemaEmbedded: %v", err)
+	}
+	// Mirror `morrow init`: only init creates the master key.
+	if err := crypto.InitMasterKey(); err != nil {
+		t.Fatalf("InitMasterKey: %v", err)
 	}
 }
 
@@ -187,5 +194,31 @@ func TestDelEnv(t *testing.T) {
 	}
 	if _, _, err := GetEnv("a", "K"); err == nil {
 		t.Error("key should be gone")
+	}
+}
+
+func TestSetSecuredWithoutKeyFails(t *testing.T) {
+	setupDB(t)
+	addApp(t, "a")
+	keyPath := filepath.Join(os.Getenv("MORROW_HOME"), "missing.key")
+	t.Setenv("MORROW_KEY_PATH", keyPath)
+
+	err := SetEnv("a", "TOKEN", "v", true)
+	if !errors.Is(err, crypto.ErrNoMasterKey) {
+		t.Fatalf("err = %v, want ErrNoMasterKey", err)
+	}
+	if _, statErr := os.Stat(keyPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("SetEnv must not create a master key")
+	}
+	var n int
+	if err := db.DB.QueryRow("SELECT count(*) FROM application_environment_variables").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d rows written despite encryption failure", n)
+	}
+	// Unsecured values do not need the key.
+	if err := SetEnv("a", "PLAIN", "v", false); err != nil {
+		t.Errorf("unsecured SetEnv: %v", err)
 	}
 }

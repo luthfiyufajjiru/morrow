@@ -4,17 +4,30 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func setupKey(t *testing.T) string {
+// setupNoKey points Morrow at a temp dir with no master key yet.
+func setupNoKey(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "test.key")
 	t.Setenv("MORROW_HOME", dir)
 	t.Setenv("MORROW_KEY_PATH", keyPath)
+	return keyPath
+}
+
+// setupKey is setupNoKey plus the key that `morrow init` would create.
+func setupKey(t *testing.T) string {
+	t.Helper()
+	keyPath := setupNoKey(t)
+	if err := InitMasterKey(); err != nil {
+		t.Fatal(err)
+	}
 	return keyPath
 }
 
@@ -167,15 +180,42 @@ func TestInitMasterKey(t *testing.T) {
 	}
 }
 
-func TestEncryptCreatesKey(t *testing.T) {
-	keyPath := setupKey(t)
-	if _, err := os.Stat(keyPath); err == nil {
-		t.Fatal("key should not exist yet")
+func TestEncryptRequiresInit(t *testing.T) {
+	keyPath := setupNoKey(t)
+	_, err := Encrypt("x")
+	if !errors.Is(err, ErrNoMasterKey) {
+		t.Fatalf("err = %v, want ErrNoMasterKey", err)
 	}
-	if _, err := Encrypt("x"); err != nil {
+	if !strings.Contains(err.Error(), "morrow init") || !strings.Contains(err.Error(), keyPath) {
+		t.Errorf("error should name the key path and 'morrow init': %v", err)
+	}
+	if _, statErr := os.Stat(keyPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("Encrypt must not create a key")
+	}
+}
+
+// A deleted key must not be silently replaced: the old ciphertext has to stay
+// recoverable by restoring the original key file.
+func TestEncryptAfterKeyLossKeepsOldSecretsRecoverable(t *testing.T) {
+	keyPath := setupKey(t)
+	enc, err := Encrypt("old-secret")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if b, err := os.ReadFile(keyPath); err != nil || len(b) != 32 {
-		t.Fatalf("expected 32-byte key created, err=%v len=%d", err, len(b))
+	backup, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Encrypt("new-secret"); !errors.Is(err, ErrNoMasterKey) {
+		t.Fatalf("err = %v, want ErrNoMasterKey", err)
+	}
+	if err := os.WriteFile(keyPath, backup, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Decrypt(enc); err != nil || got != "old-secret" {
+		t.Fatalf("restored key should decrypt old value: %q, %v", got, err)
 	}
 }

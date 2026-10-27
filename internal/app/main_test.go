@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"morrow/internal/crypto"
 	"morrow/internal/db"
 	"morrow/internal/env"
 )
@@ -23,6 +24,10 @@ func setupDB(t *testing.T) {
 	t.Cleanup(func() { db.DB.Close() })
 	if err := db.EnsureSchemaEmbedded(); err != nil {
 		t.Fatalf("EnsureSchemaEmbedded: %v", err)
+	}
+	// Mirror `morrow init`: only init creates the master key.
+	if err := crypto.InitMasterKey(); err != nil {
+		t.Fatalf("InitMasterKey: %v", err)
 	}
 }
 

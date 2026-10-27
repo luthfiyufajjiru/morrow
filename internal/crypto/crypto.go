@@ -59,11 +59,20 @@ func ensureMasterKey() ([]byte, error) {
 	return nil, fmt.Errorf("failed to load master key: %w", err)
 }
 
-// Encrypt strings to base64 using AES-GCM
+// ErrNoMasterKey means the key file does not exist. Only `morrow init` creates
+// it: generating one anywhere else would silently orphan every value already
+// encrypted with the old key (e.g. after a deleted file or wrong MORROW_KEY_PATH).
+var ErrNoMasterKey = errors.New("master key not found")
+
+// Encrypt strings to base64 using AES-GCM. It never creates the master key.
 func Encrypt(text string) (string, error) {
-	key, err := ensureMasterKey()
+	key, err := getMasterKey()
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%w at %s: run 'morrow init' to create it. If secured values already exist, "+
+			"restore the original key file instead; a new key cannot decrypt them", ErrNoMasterKey, config.GetKeyPath())
+	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to load master key: %w", err)
 	}
 
 	block, err := aes.NewCipher(key)
