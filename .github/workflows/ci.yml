@@ -94,6 +94,36 @@ jobs:
         shell: pwsh
         run: ./test/e2e/lifecycle.ps1 -Morrow bin/morrow.exe
 
+  startup:
+    # Start at boot with the real OS hook: a systemd unit on Linux, a scheduled
+    # task running as SYSTEM on Windows; a reboot is simulated by killing every
+    # app and relay (test/e2e/startup.*).
+    name: startup (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          go build -o "bin/morrow$ext" .
+      - name: startup (Linux, systemd)
+        if: runner.os == 'Linux'
+        run: sudo sh test/e2e/startup.sh "$PWD/bin/morrow"
+      - name: startup (Windows, scheduled task)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./test/e2e/startup.ps1 -Morrow bin/morrow.exe
+
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }})
     runs-on: ubuntu-latest

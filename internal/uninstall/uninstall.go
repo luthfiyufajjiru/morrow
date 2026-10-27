@@ -18,6 +18,7 @@ import (
 	"morrow/internal/env"
 	"morrow/internal/inbox"
 	"morrow/internal/privilege"
+	"morrow/internal/startup"
 	"os"
 	"path/filepath"
 )
@@ -36,6 +37,7 @@ type Plan struct {
 
 	Apps      []RunningApp
 	Hook      string   // description of the installed auto-apply hook, if any
+	Startup   string   // description of the installed boot hook, if any
 	Inbox     []string // inbox folder and key files that exist
 	Group     string   // deploy group to delete, if it exists
 	Delete    []string // with Purge: database, key and logs that exist
@@ -78,6 +80,9 @@ func Build(purge bool) (Plan, error) {
 	if p.System {
 		if desc, ok := inbox.HookInstalled(); ok {
 			p.Hook = desc
+		}
+		if desc, ok := startup.Installed(); ok {
+			p.Startup = desc
 		}
 		if privilege.DeployGroupExists() {
 			p.Group = privilege.DeployGroup
@@ -135,6 +140,9 @@ func (p Plan) Lines() []string {
 	if p.Hook != "" {
 		out = append(out, "  remove hook:    "+p.Hook)
 	}
+	if p.Startup != "" {
+		out = append(out, "  remove startup: "+p.Startup)
+	}
 	for _, f := range p.Inbox {
 		out = append(out, "  remove inbox:   "+f)
 	}
@@ -170,7 +178,7 @@ func Execute(p Plan, backupKey string) error {
 
 	var stopErrs []error
 	for _, a := range p.Apps {
-		if err := app.StopApp(a.Name); err != nil && !errors.Is(err, app.ErrNotRunning) {
+		if err := app.StopForShutdown(a.Name, app.DefaultStopTimeout); err != nil && !errors.Is(err, app.ErrNotRunning) {
 			stopErrs = append(stopErrs, fmt.Errorf("stop %s: %w", a.Name, err))
 		}
 	}
@@ -178,6 +186,11 @@ func Execute(p Plan, backupKey string) error {
 		return fmt.Errorf("nothing was removed because some apps could not be stopped:\n%w", err)
 	}
 
+	if p.Startup != "" {
+		if err := startup.Remove(); err != nil {
+			return err
+		}
+	}
 	if p.Hook != "" {
 		if err := inbox.RemoveHook(); err != nil {
 			return err

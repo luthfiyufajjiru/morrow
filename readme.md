@@ -133,6 +133,7 @@ Open a new shell afterwards. Completion works before `init` and for regular user
 | Store submitted secrets (admin; normally automatic) | `morrow apply` |
 | Show submission outcomes (never values) | `morrow inbox` |
 | Shell completion script (bash, zsh, fish, powershell) | `morrow completion <shell>` |
+| Start apps at boot (systemd unit / Windows scheduled task as SYSTEM) (admin) | `morrow startup [--status] [--remove]` |
 | Uninstall: stop apps, remove the inbox, keep data; `--purge` deletes data too (admin) | `morrow uninstall [--dry-run] [--purge] [--backup-key <file>] [--yes]` |
 
 ## Detail Application Example

@@ -93,7 +93,18 @@ sudo morrow update --max-restarts 10 api /srv/api/server            # default 5
 
 With `unless-stopped`, the app's log relay restarts it after 1s, 2s, 4s, ... (at most a minute), and gives up after `--max-restarts` restarts in a row; an app that ran for at least a minute before exiting starts counting from zero again. While it waits the status is `restarting`, and `morrow stop` cancels the restart. Every decision is written to the app's log (`[morrow] exited unexpectedly after 3s; restarting in 2s (attempt 2/5)`), and `morrow detail` shows the policy and restart count. One-off `start -e` variables are not reused by automatic restarts.
 
-**Reboots.** Morrow does not start apps at boot yet. After a reboot, `morrow list` shows them as `stopped`; start them again with `sudo morrow start`.
+**Reboots.** Run this once on a server:
+
+```bash
+sudo morrow startup            # Windows: from an Administrator terminal
+morrow startup --status        # is it installed, and which apps start at boot
+```
+
+At every boot it starts the apps you started and did not stop yourself: `morrow start`/`restart` adds an app to that list, `morrow stop` removes it, while crashes, automatic restarts and `uninstall` leave it alone.
+
+- **Linux:** a systemd unit, `morrow.service`, which also stops the apps gracefully when the machine shuts down. Restarting or stopping the unit by hand never stops apps; only a real shutdown does.
+- **Windows:** a scheduled task, `Morrow\Startup`, that runs as SYSTEM shortly after startup. Apps it starts run in the services session, so they keep running when users log off. Apps you start yourself from an Administrator terminal run in your session and may stop when you log off; a reboot (or `schtasks /Run /TN Morrow\Startup` after stopping them) moves them to SYSTEM.
+- `sudo morrow startup --remove` uninstalls the hook without stopping anything.
 
 ## 3. Environment variables and secrets
 
@@ -209,7 +220,7 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 | | `uninstall` | `uninstall --purge` |
 | --- | --- | --- |
 | Stop every running app and its log relay | yes | yes |
-| Remove the inbox hook (systemd unit / scheduled task), inbox folder, inbox keys and deployers group | yes | yes |
+| Remove the boot hook (`morrow startup`), the inbox hook, inbox folder, inbox keys and deployers group | yes | yes |
 | Delete the database, master key and logs | no: reinstall and `morrow init` resume with your apps and secrets | yes |
 | Delete the morrow binary | no: it prints the path to delete, or uninstall the MSI/package | no |
 
@@ -238,7 +249,7 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 
 ## 10. FAQ
 
-**Is Morrow like PM2?** It has PM2-style commands but no resident daemon and no Node.js. It is a single Go binary; each command runs and exits, and only a small log relay per app keeps running. With `--restart unless-stopped` its log relay restarts crashed apps with backoff. It does not (yet) start apps at boot or run in cluster mode.
+**Is Morrow like PM2?** It has PM2-style commands but no resident daemon and no Node.js. It is a single Go binary; each command runs and exits, and only a small log relay per app keeps running. With `--restart unless-stopped` its log relay restarts crashed apps with backoff. `morrow startup` starts apps at boot. It does not run apps in cluster mode.
 
 **Do I need sudo for everything?** On a system install, for anything that changes state or reveals a secret. Reading status does not need it. In per-user mode you never need it.
 
@@ -254,7 +265,7 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 
 **Where do my app's logs go and who can read them?** `<logs>/<app>.log` (`/var/log/morrow` or `%ProgramData%\Morrow\logs`). Only root/Administrators, because apps sometimes print secrets.
 
-**What happens after a reboot?** Apps are not started automatically yet. `morrow list` shows them as `stopped`; start them with `sudo morrow start`.
+**What happens after a reboot?** With `sudo morrow startup` installed, the apps you had started (and not stopped) start again automatically. Without it, `morrow list` shows them as `stopped` until you start them.
 
 **Does the inbox work in per-user mode?** No, there is no one to protect secrets from there. Use `set-env`.
 
