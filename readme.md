@@ -6,7 +6,7 @@
 This project uses a unified Make-based build system that compiles binaries for multiple platforms (Windows and Linux) and builds WiX installers (`.msi`).
 
 **Requirements:**
-- Go (1.25.5+)
+- Go (1.27.3+)
 - Make (`GNU Make`)
 - .NET SDK (for building WiX installers via `dotnet build`)
 - PowerShell (used internally by Makefile for cross-platform scripts on Windows)
