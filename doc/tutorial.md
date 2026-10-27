@@ -36,6 +36,24 @@ morrow init
 
 Running `init` again is safe: it keeps the existing key and re-applies file permissions.
 
+**Shell completion.** Tab completes commands, flags, app names and variable names (never values). Set it up once:
+
+```bash
+# bash (Linux)
+morrow completion bash | sudo tee /etc/bash_completion.d/morrow > /dev/null
+# zsh
+morrow completion zsh > "${fpath[1]}/_morrow"
+# fish
+morrow completion fish > ~/.config/fish/completions/morrow.fish
+```
+
+```powershell
+# PowerShell (Windows): add to your profile
+morrow completion powershell | Out-String | Invoke-Expression
+```
+
+Open a new shell afterwards. Completion works before `init` and for regular users; it only reads names from the database.
+
 ## 2. Run your first app
 
 ```bash

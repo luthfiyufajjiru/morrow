@@ -89,6 +89,25 @@ sudo morrow start my-app
 morrow list
 ```
 
+### 4. Shell completion
+Tab completes commands, flags, app names and variable names (never values). Set it up once:
+
+```bash
+# bash (Linux)
+morrow completion bash | sudo tee /etc/bash_completion.d/morrow > /dev/null
+# zsh
+morrow completion zsh > "${fpath[1]}/_morrow"
+# fish
+morrow completion fish > ~/.config/fish/completions/morrow.fish
+```
+
+```powershell
+# PowerShell (Windows): add to your profile
+morrow completion powershell | Out-String | Invoke-Expression
+```
+
+Open a new shell afterwards. Completion works before `init` and for regular users; it only reads names from the database.
+
 ## Command List
 | Descriptions | Commands |
 | --- | --- |
@@ -113,6 +132,7 @@ morrow list
 | Submit write-only secrets (no admin, needs a grant) | `morrow submit-env <app> <KEY[=VALUE]>... [--restart]` |
 | Store submitted secrets (admin; normally automatic) | `morrow apply` |
 | Show submission outcomes (never values) | `morrow inbox` |
+| Shell completion script (bash, zsh, fish, powershell) | `morrow completion <shell>` |
 | Uninstall: stop apps, remove the inbox, keep data; `--purge` deletes data too (admin) | `morrow uninstall [--dry-run] [--purge] [--backup-key <file>] [--yes]` |
 
 ## Detail Application Example

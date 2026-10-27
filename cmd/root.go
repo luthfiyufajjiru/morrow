@@ -20,8 +20,8 @@ var RootCmd = &cobra.Command{
 
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 
-		// init, help, the relay and uninstall run (or open the DB themselves) even if not initialized
-		if cmd.Name() == "init" || cmd.Name() == "help" || cmd.Name() == "_relay" || cmd.Name() == "uninstall" {
+		// Some commands run (or open the DB themselves) even if not initialized.
+		if skipPreRun(cmd) {
 			return
 		}
 
@@ -60,4 +60,16 @@ func Execute() {
 
 func RegisterCommands(cmds ...*cobra.Command) {
 	RootCmd.AddCommand(cmds...)
+}
+
+// skipPreRun lists the commands that must work before 'morrow init' or must
+// not print anything extra: init, help, the log relay, uninstall, and shell
+// completion (the 'completion <shell>' scripts and cobra's hidden __complete
+// requests sent on every Tab press).
+func skipPreRun(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "init", "help", "_relay", "uninstall", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return true
+	}
+	return cmd.HasParent() && cmd.Parent().Name() == "completion"
 }

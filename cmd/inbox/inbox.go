@@ -5,6 +5,7 @@ package inbox
 import (
 	"fmt"
 	"log"
+	"morrow/cmd/complete"
 	"morrow/internal/grant"
 	"morrow/internal/inbox"
 	"morrow/internal/privilege"
@@ -181,4 +182,14 @@ func init() {
 
 	SubmitEnvCmd.Flags().BoolVar(&restartFlag, "restart", false, "Restart the app after the values are applied (if it is running)")
 	InboxCmd.Flags().IntVarP(&eventsLimit, "lines", "n", 20, "Number of events to show")
+}
+
+func init() {
+	SubmitEnvCmd.ValidArgsFunction = complete.AppThenAssignments
+	for _, c := range []*cobra.Command{GrantCmd, RevokeCmd} {
+		_ = c.RegisterFlagCompletionFunc("app", complete.AppFlag)
+	}
+	for _, c := range []*cobra.Command{GrantsCmd, ApplyCmd, InboxCmd} {
+		c.ValidArgsFunction = complete.None
+	}
 }
