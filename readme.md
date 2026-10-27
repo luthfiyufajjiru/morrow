@@ -46,10 +46,13 @@ Morrow requires an initial setup to create its database and encryption keys:
 ```
 
 ### 3. Basic Usage
+![morrow quick start: init, create with a working directory, start, list and logs](doc/assets/quickstart.gif)
+
 Register a new application and start it:
 ```bash
-# Create the app
-./morrow create my-app /path/to/executable arg1 arg2
+# Create the app (Morrow flags such as -w go before the app name;
+# everything after the executable is passed to the app as-is)
+./morrow create -w /path/to/workdir my-app /path/to/executable --port 8080
 
 # Start it
 ./morrow start my-app
@@ -78,12 +81,21 @@ Register a new application and start it:
 | Get Application Logs | `morrow logs <app-name>` |
 
 ## Detail Application Example
-By default, this command outputs a human-readable table. Use the `--json` flag for programmatic integration.
+By default, this command outputs a human-readable table. Use the `--json` flag for programmatic integration. Secured variables are always shown as `****` here; the real value is only passed to the process.
+
+![morrow secured env vars: set-env with a secured value, restart, detail shows it masked, logs show the app received it](doc/assets/secured-env.gif)
+
+The outputs below are real, captured on Linux after:
+```bash
+morrow create -w /tmp/demo/api api /tmp/demo/bin/demo-api --port 8080
+morrow set-env api API_TOKEN:s=s3cr3t-demo-token LOG_LEVEL=info
+morrow start api
+```
 
 ### Default Terminal Table
 **Command:**
 ```bash
-morrow detail my-app
+morrow detail api
 ```
 
 **Result:**
@@ -91,58 +103,57 @@ morrow detail my-app
 +----------------------------+------------------------------------------+
 | Field                      | Value                                    |
 +----------------------------+------------------------------------------+
-| Application ID             | 8745814f-30c8-4c6a-ad89-546ba1949b5e     |
-| Application Name           | my-app                                   |
-| Executable Path            | /usr/bin/python3                         |
-| Arguments                  | /home/user/my-app/main.py --port 8080    |
-| Full Command               | DB_URL=postgresql://localhost:5432 /usr/bin/python3 /home/user/my-app/main.py --port 8080 |
+| Application ID             | 609e994d-4d0f-4ca1-866c-4585666dbafd     |
+| Application Name           | api                                      |
+| Executable Path            | /tmp/demo/bin/demo-api                   |
+| Arguments                  | --port 8080                              |
+| Working Directory          | /tmp/demo/api                            |
+| Full Command               | API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080 |
 | Status                     | running                                  |
-| PID                        | 1234                                     |
-| Creation Time              | 2026-03-29T20:00:00Z                     |
-| Update Time                | 2026-03-29T21:00:00Z                     |
-| Status Time                | 2026-03-29T22:08:31Z                     |
-| Last Run Time              | 2026-03-29T22:00:00Z                     |
+| PID                        | 345                                      |
+| Creation Time              | 2026-10-27T08:28:44Z                     |
+| Update Time                | 2026-10-27T08:28:50Z                     |
+| Status Time                | 2026-10-27T08:28:50Z                     |
+| Last Run Time              | 2026-10-27T08:28:50Z                     |
 +----------------------------+------------------------------------------+
 ```
 
 ### JSON Output
 **Command:**
 ```bash
-morrow detail my-app --json
+morrow detail api --json
 ```
 
 **Result:**
 ```json
 {
-  "application_id": "8745814f-30c8-4c6a-ad89-546ba1949b5e",
-  "application_name": "my-app",
-  "application_executable_path": "/usr/bin/python3",
+  "application_id": "609e994d-4d0f-4ca1-866c-4585666dbafd",
+  "application_name": "api",
+  "application_executable_path": "/tmp/demo/bin/demo-api",
   "application_arguments": [
-    "/home/user/my-app/main.py",
     "--port",
     "8080"
   ],
+  "application_working_directory": "/tmp/demo/api",
   "application_environment_variables": {
-    "MORROW_APP_ID": "8745814f-30c8-4c6a-ad89-546ba1949b5e",
-    "MORROW_APP_NAME": "my-app",
-    "DB_HOST": "localhost",
-    "DB_USER": "admin",
-    "NODE_ENV": "production"
+    "API_TOKEN": "****",
+    "LOG_LEVEL": "info"
   },
   "application_status": "running",
-  "application_pid": 1234,
-  "application_command_line": "MORROW_APP_ID=8745814f-30c8-4c6a-ad89-546ba1949b5e MORROW_APP_NAME=my-app DB_URL=postgresql://localhost:5432 /usr/bin/python3 /home/user/my-app/main.py --port 8080",
-  "application_creation_time": "2026-03-29T20:00:00Z",
-  "application_update_time": "2026-03-29T21:00:00Z",
-  "application_status_time": "2026-03-29T22:08:31Z",
-  "application_last_run_time": "2026-03-29T22:00:00Z"
+  "application_pid": 345,
+  "application_creation_time": "2026-10-27T08:28:44Z",
+  "application_update_time": "2026-10-27T08:28:50Z",
+  "application_status_time": "2026-10-27T08:28:50Z",
+  "application_last_run_time": "2026-10-27T08:28:50Z",
+  "application_command_line": "API_TOKEN=**** LOG_LEVEL=info /tmp/demo/bin/demo-api --port 8080"
 }
 ```
 
 ## Example
 ### Python Application
 ```bash
-morrow create py-app /usr/bin/python3 /home/user/my-app/main.py
+# Run from the project folder so relative paths (config, .env, venv assets) resolve
+morrow create -w /home/user/my-app py-app /home/user/my-app/.venv/bin/python main.py --port 8080
 morrow start py-app
 ```
 
@@ -187,8 +198,8 @@ This ensures high availability and reliable log capture without requiring a heav
 
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 
-- **Censorship**: By default, secured environment variables are censored as `****` in `list-env` and `detail-app` outputs.
-- **Elevation**: Run `morrow` with `sudo` (root privileges) to bypass censorship and view plaintext values for secured variables.
+- **Access follows the key file**: secured values are encrypted with the master key (`.morrow.key` next to the binary, or `MORROW_KEY_PATH`). Whoever can read that file can decrypt them — no root/admin check is involved.
+- **Censorship**: `detail` (table and `--json`, including the Full Command) always shows secured values as `****`. `list-env` shows them as `****` when the key is not readable; `get-env` and `start` fail with a clear error in that case.
 - **Mixed Bulk Support**: You can override the default security setting per variable by suffixing the key:
     - `key:s=value` -> Force Secured (encrypted)
     - `key:u=value` -> Force Unsecured (plaintext)
