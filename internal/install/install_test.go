@@ -232,3 +232,27 @@ func TestPrepareUser(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateDir(t *testing.T) {
+	root := t.TempDir()
+	j := func(p ...string) string { return filepath.Join(append([]string{root}, p...)...) }
+	fhs := config.Layout{DBPath: j("var", "lib", "morrow", "morrow.db"), KeyPath: j("etc", "morrow", ".morrow.key"), LogsDir: j("var", "log", "morrow")}
+	flat := config.Layout{DBPath: j("Morrow", "morrow.db"), KeyPath: j("Morrow", ".morrow.key"), LogsDir: j("Morrow", "logs")}
+	cases := []struct {
+		name string
+		l    config.Layout
+		dir  string
+		want bool
+	}{
+		{"fhs db dir readable", fhs, j("var", "lib", "morrow"), false},
+		{"fhs key dir private", fhs, j("etc", "morrow"), true},
+		{"fhs logs private", fhs, j("var", "log", "morrow"), true},
+		{"flat shared dir readable", flat, j("Morrow"), false},
+		{"flat logs private", flat, j("Morrow", "logs"), true},
+	}
+	for _, c := range cases {
+		if got := privateDir(c.l, c.dir); got != c.want {
+			t.Errorf("%s: privateDir = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

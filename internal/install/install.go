@@ -14,18 +14,26 @@ import (
 	"path/filepath"
 )
 
-// PrepareSystem creates the directories of a system layout. The key's
-// directory is private unless it also holds the database or logs (Windows),
-// in which case the key file itself is restricted by privilege.RestrictKeyFile.
+// PrepareSystem creates the directories of a system layout. The logs
+// directory is private (apps may print secrets), and so is the key's directory
+// unless it also holds the database (Windows), in which case the key file
+// itself is restricted by privilege.RestrictKeyFile. Only the database
+// directory is readable by regular users, for the read-only commands.
 func PrepareSystem(l config.Layout) error {
-	keyDir := filepath.Dir(l.KeyPath)
 	for _, dir := range l.Dirs() {
-		private := dir == keyDir && dir != filepath.Dir(l.DBPath) && dir != l.LogsDir
-		if err := privilege.PrepareSystemDir(dir, private); err != nil {
+		if err := privilege.PrepareSystemDir(dir, privateDir(l, dir)); err != nil {
 			return fmt.Errorf("failed to create %s: %w", dir, err)
 		}
 	}
 	return nil
+}
+
+// privateDir reports whether dir of a system layout must be closed to regular users.
+func privateDir(l config.Layout, dir string) bool {
+	if dir == filepath.Dir(l.DBPath) {
+		return false
+	}
+	return dir == l.LogsDir || dir == filepath.Dir(l.KeyPath)
 }
 
 // PrepareUser creates the database and logs directories of a per-user
