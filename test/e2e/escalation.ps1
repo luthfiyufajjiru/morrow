@@ -186,6 +186,39 @@ try {
     Check ok   "see outcomes in 'morrow inbox'"        "& `$m inbox$exit" 'applied'
     Check ok   'outcomes show rejections, no values'   "& `$m inbox$exit" 'rejected'
 
+
+    # --- Uninstall -------------------------------------------------------------
+    function PassIf([string] $name, [bool] $cond) {
+        if ($cond) { $script:pass++; Write-Host "PASS  $name" } else { $script:fail++; Write-Host "FAIL  $name" }
+    }
+    function DemoRunning { [bool](Get-Process demo-api -ErrorAction SilentlyContinue) }
+    function GroupExists { & net localgroup $deployGroup *> $null; $LASTEXITCODE -eq 0 }
+    $backup = Join-Path $env:TEMP 'morrow-e2e-key.bak'
+    Remove-Item -Force $backup -ErrorAction SilentlyContinue
+
+    Write-Host "`nuninstall, as ${user}:"
+    Check deny 'uninstall'                         "& `$m uninstall --yes$exit" 'requires elevation'
+    Check deny 'uninstall --purge'                 "& `$m uninstall --purge --yes$exit" 'requires elevation'
+
+    Write-Host "`nuninstall, as Administrator:"
+    & $m uninstall --dry-run | Out-Null
+    PassIf '--dry-run changes nothing' ((DemoRunning) -and (Test-Path $inbox) -and (Test-Path (Join-Path $data '.morrow.key')) -and (GroupExists))
+    'n' | & $m uninstall | Out-Null
+    PassIf "answering 'n' changes nothing" ((DemoRunning) -and (Test-Path $inbox))
+    & $m uninstall --yes | Out-Null
+    PassIf 'uninstall stops apps, removes inbox and group' ((-not (DemoRunning)) -and -not (Test-Path $inbox) -and -not (Test-Path $inboxKey) -and -not (Test-Path (Join-Path $data 'inbox.pub')) -and -not (GroupExists))
+    PassIf '...and keeps database, key and logs' ((Test-Path (Join-Path $data 'morrow.db')) -and (Test-Path (Join-Path $data '.morrow.key')) -and (Test-Path (Join-Path $data 'logs')))
+    & $m init | Out-Null
+    PassIf 'reinstall resumes with apps and secrets' ((((& $m list) -join "`n") -match '\| api ') -and ((& $m get-env api API_TOKEN) -join ' ').Contains($newSecret))
+    & $m start api | Out-Null
+    Start-Sleep -Seconds 1
+    'yes' | & $m uninstall --purge | Out-Null
+    PassIf "purge refuses anything but the word 'purge'" ((Test-Path (Join-Path $data '.morrow.key')) -and (DemoRunning))
+    & $m uninstall --purge --yes --backup-key $backup | Out-Null
+    PassIf 'purge removes all data, stops apps' ((-not (Test-Path $data)) -and -not (DemoRunning))
+    PassIf '...backs up the key, keeps the binary' ((Test-Path $backup) -and (Get-Item $backup).Length -eq 32 -and (Test-Path $m))
+    Remove-Item -Force $backup -ErrorAction SilentlyContinue
+
     Write-Host "`nresult: $($script:pass) passed, $($script:fail) failed"
     if ($script:fail -gt 0) { exit 1 }
 }

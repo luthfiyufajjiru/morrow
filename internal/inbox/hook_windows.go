@@ -24,3 +24,22 @@ func InstallHook(exe, _ string) (string, error) {
 	}
 	return fmt.Sprintf("scheduled task %s (applies submissions every minute, as SYSTEM)", TaskName), nil
 }
+
+// HookInstalled reports whether the scheduled task exists.
+func HookInstalled() (string, bool) {
+	if exec.Command("schtasks", "/Query", "/TN", TaskName).Run() == nil {
+		return "scheduled task " + TaskName, true
+	}
+	return "", false
+}
+
+// RemoveHook deletes the scheduled task. A missing task is not an error.
+func RemoveHook() error {
+	if _, ok := HookInstalled(); !ok {
+		return nil
+	}
+	if out, err := exec.Command("schtasks", "/Delete", "/TN", TaskName, "/F").CombinedOutput(); err != nil {
+		return fmt.Errorf("schtasks /Delete failed: %v: %s", err, out)
+	}
+	return nil
+}

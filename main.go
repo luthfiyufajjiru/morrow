@@ -31,6 +31,7 @@ func main() {
 		inbox.SubmitEnvCmd,
 		inbox.ApplyCmd,
 		inbox.InboxCmd,
+		cmd.UninstallCmd,
 		relay.RelayCmd,
 	)
 	cmd.Execute()

@@ -292,7 +292,7 @@ func TestApplyWithoutInbox(t *testing.T) {
 
 func TestApplyLock(t *testing.T) {
 	setup(t, submitter{})
-	unlock, err := lock()
+	unlock, err := Lock()
 	if err != nil {
 		t.Fatal(err)
 	}

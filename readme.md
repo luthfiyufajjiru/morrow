@@ -113,6 +113,7 @@ morrow list
 | Submit write-only secrets (no admin, needs a grant) | `morrow submit-env <app> <KEY[=VALUE]>... [--restart]` |
 | Store submitted secrets (admin; normally automatic) | `morrow apply` |
 | Show submission outcomes (never values) | `morrow inbox` |
+| Uninstall: stop apps, remove the inbox, keep data; `--purge` deletes data too (admin) | `morrow uninstall [--dry-run] [--purge] [--backup-key <file>] [--yes]` |
 
 ## Detail Application Example
 By default, this command outputs a human-readable table. Use the `--json` flag for programmatic integration. Secured variables are always shown as `****` here; the real value is only passed to the process.

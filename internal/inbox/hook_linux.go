@@ -55,3 +55,28 @@ func InstallHook(exe, inboxDir string) (string, error) {
 	}
 	return "systemd unit morrow-inbox.path (applies submissions as soon as they arrive)", nil
 }
+
+// HookInstalled reports whether the systemd units are installed.
+func HookInstalled() (string, bool) {
+	if _, err := os.Stat(filepath.Join(systemdDir, "morrow-inbox.path")); err == nil {
+		return "systemd unit morrow-inbox.path", true
+	}
+	return "", false
+}
+
+// RemoveHook stops and removes the systemd units. Missing units are not an error.
+func RemoveHook() error {
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		_ = exec.Command("systemctl", "disable", "--now", "morrow-inbox.path").Run()
+		_ = exec.Command("systemctl", "stop", "morrow-inbox.service").Run()
+	}
+	for _, f := range []string{"morrow-inbox.path", "morrow-inbox.service"} {
+		if err := os.Remove(filepath.Join(systemdDir, f)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		_ = exec.Command("systemctl", "daemon-reload").Run()
+	}
+	return nil
+}

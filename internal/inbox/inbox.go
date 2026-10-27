@@ -153,7 +153,7 @@ type Result struct {
 // the private key and writes the database.
 func Apply() (Result, error) {
 	var res Result
-	unlock, err := lock()
+	unlock, err := Lock()
 	if err != nil {
 		return res, err
 	}
@@ -346,9 +346,9 @@ func Events(limit int) ([]Event, error) {
 	return out, rows.Err()
 }
 
-// lock prevents two apply runs (the OS hook and a manual run) from
+// Lock prevents two apply runs (the OS hook and a manual run) from
 // processing the same files. A lock older than ten minutes is stale.
-func lock() (func(), error) {
+func Lock() (func(), error) {
 	path := filepath.Join(filepath.Dir(config.GetInboxPrivateKeyPath()), ".morrow-inbox.lock")
 	for i := 0; i < 2; i++ {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)

@@ -20,8 +20,8 @@ var RootCmd = &cobra.Command{
 
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 
-		// Allow init and help commands even if not initiated
-		if cmd.Name() == "init" || cmd.Name() == "help" || cmd.Name() == "_relay" {
+		// init, help, the relay and uninstall run (or open the DB themselves) even if not initialized
+		if cmd.Name() == "init" || cmd.Name() == "help" || cmd.Name() == "_relay" || cmd.Name() == "uninstall" {
 			return
 		}
 
