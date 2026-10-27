@@ -65,6 +65,35 @@ jobs:
         shell: pwsh
         run: ./test/e2e/escalation.ps1 -Morrow bin/morrow.exe -DemoApi bin/demo-api.exe
 
+  lifecycle:
+    # Graceful stop, stop timeout, restart on crash with backoff, giving up and
+    # cancelling a restart, with real processes (test/e2e/lifecycle.*).
+    name: lifecycle (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          go build -o "bin/morrow$ext" .
+      - name: lifecycle (Linux)
+        if: runner.os == 'Linux'
+        run: sh test/e2e/lifecycle.sh "$PWD/bin/morrow"
+      - name: lifecycle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./test/e2e/lifecycle.ps1 -Morrow bin/morrow.exe
+
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }})
     runs-on: ubuntu-latest

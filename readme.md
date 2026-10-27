@@ -117,12 +117,12 @@ Open a new shell afterwards. Completion works before `init` and for regular user
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
 | List environment variables | `morrow list-env <app-name>` |
 | List All Applications | `morrow list` |
-| Create Application | `morrow create [-w <workdir>] <app-name> <exec-path> <args...>` |
+| Create Application | `morrow create [-w <workdir>] [--restart no\|unless-stopped] [--max-restarts N] <app-name> <exec-path> <args...>` |
 | Delete Application | `morrow delete <app-name>` |
 | Start Application | `morrow start <app-name> [-e KEY=VALUE...]` |
-| Stop Application | `morrow stop <app-name>` |
-| Restart Application | `morrow restart <app-name>` |
-| Update Application | `morrow update [-w <workdir>] <app-name> <exec-path> <args...>` |
+| Stop Application (SIGTERM, wait, then kill) | `morrow stop [--timeout 10s] <app-name>` |
+| Restart Application | `morrow restart [--timeout 10s] <app-name>` |
+| Update Application | `morrow update [-w <workdir>] [--restart ...] [--max-restarts N] <app-name> <exec-path> <args...>` |
 | Get Application Status | `morrow status <app-name>` |
 | Get Application Detail | `morrow detail <app-name>` |
 | Get Application Logs | `morrow logs <app-name>` |
