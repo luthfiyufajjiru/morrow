@@ -199,7 +199,8 @@ try {
 
     Write-Host "`nrun as a dedicated account (as Administrator):"
     $env:MORROW_E2E_PW = $plainPw
-    & $m create --user $user --password-env MORROW_E2E_PW runas cmd /c "whoami & ping -n 10013 127.0.0.1" | Out-Null
+    # %USERNAME% is expanded by cmd.exe in the app, from the account's own environment.
+    & $m create --user $user --password-env MORROW_E2E_PW runas cmd /c "echo user=%USERNAME% & ping -n 10013 127.0.0.1" | Out-Null
     Remove-Item Env:MORROW_E2E_PW
     & $m start runas | Out-Null; Start-Sleep -Seconds 3
     $rpid = [int](((& $m status runas) | Select-String '^PID: (\d+)').Matches[0].Groups[1].Value)
@@ -207,8 +208,8 @@ try {
     $rowner = if ($rproc) { (Invoke-CimMethod -InputObject $rproc -MethodName GetOwner).User } else { '' }
     PassIf "app process runs as $user, not Administrator ($rowner)" ($rowner -eq $user)
     $runasLog = ((& $m logs runas 2>&1) | Out-String)
-    $seesSelf = $runasLog -match [regex]::Escape("\$user")
-    PassIf 'app sees its own account' $seesSelf
+    $seesSelf = $runasLog -match "user=$user"
+    PassIf "app sees its own account's environment (output reaches the log)" $seesSelf
     if (-not $seesSelf) { Write-Host "  runas log:`n$runasLog" }
     PassIf 'detail shows the account' ([bool]((& $m detail runas) | Select-String "Run As .*$user"))
     $stored = (& $m detail runas --json) -join ' '
