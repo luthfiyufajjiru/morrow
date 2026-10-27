@@ -59,6 +59,7 @@ func GetAppDetail(name string) (*Application, error) {
 		}
 		return nil, err
 	}
+	app.Status, app.PID = reconcileStatus(name, app.Status, app.PID)
 
 	// Parse arguments
 	if err := json.Unmarshal([]byte(argsJSON), &app.Arguments); err != nil {
@@ -121,6 +122,24 @@ func GetAppDetail(name string) (*Application, error) {
 }
 
 const maskedValue = "****"
+
+// reconcileStatus treats a "running" app whose PID no longer exists (crash
+// without relay, reboot, killed relay) as stopped, and persists that so later
+// commands never signal a PID the OS may have reused. The write is best
+// effort: callers without write access still get the corrected view.
+func reconcileStatus(name string, status string, pid int) (string, int) {
+	if status != "running" || isProcessAlive(pid) {
+		return status, pid
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_, _ = db.DB.Exec(`
+		UPDATE applications
+		SET application_status = 'stopped', application_pid = 0,
+		    application_status_time = ?, application_update_time = ?
+		WHERE application_name = ? AND application_status = 'running' AND application_pid = ?
+	`, now, now, name, pid)
+	return "stopped", 0
+}
 
 // resolveWorkingDir converts a user-supplied working directory to an absolute
 // path and checks that it is an existing directory. Empty means "inherit".
@@ -349,6 +368,13 @@ func ListApps() ([]Application, error) {
 		_ = json.Unmarshal([]byte(argsJSON), &app.Arguments)
 		apps = append(apps, app)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // release the read before reconcileStatus may write
+	for i := range apps {
+		apps[i].Status, apps[i].PID = reconcileStatus(apps[i].Name, apps[i].Status, apps[i].PID)
+	}
 	return apps, nil
 }
 
@@ -398,5 +424,6 @@ func GetAppStatus(name string) (string, int, error) {
 		}
 		return "", 0, err
 	}
+	status, pid = reconcileStatus(name, status, pid)
 	return status, pid, nil
 }

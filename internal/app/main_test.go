@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -241,7 +242,7 @@ func TestStartAppErrors(t *testing.T) {
 	}
 
 	mustCreate(t, "run", nil, "")
-	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=4242 WHERE application_name='run'"); err != nil {
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='run'", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	_, err := StartApp("run", nil)
@@ -266,7 +267,7 @@ func TestStartAppErrors(t *testing.T) {
 func TestDeleteApp(t *testing.T) {
 	setupDB(t)
 	mustCreate(t, "run", nil, "")
-	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=4242 WHERE application_name='run'"); err != nil {
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='run'", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	err := DeleteApp("run", false)
@@ -311,5 +312,81 @@ func TestListAppsAndStatus(t *testing.T) {
 	}
 	if _, _, err := GetAppStatus("nope"); err == nil {
 		t.Error("expected error")
+	}
+}
+
+// deadPID returns the PID of a process that has already exited.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("helper process: %v", err)
+	}
+	return cmd.Process.Pid
+}
+
+func TestIsProcessAlive(t *testing.T) {
+	cases := []struct {
+		name string
+		pid  int
+		want bool
+	}{
+		{"self", os.Getpid(), true},
+		{"zero", 0, false},
+		{"negative", -1, false},
+		{"exited", deadPID(t), false},
+	}
+	for _, c := range cases {
+		if got := isProcessAlive(c.pid); got != c.want {
+			t.Errorf("%s (pid %d): got %v, want %v", c.name, c.pid, got, c.want)
+		}
+	}
+}
+
+func TestStaleRunningTreatedAsStopped(t *testing.T) {
+	setupDB(t)
+	mustCreate(t, "ghost", nil, "")
+	pid := deadPID(t)
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='ghost'", pid); err != nil {
+		t.Fatal(err)
+	}
+
+	if st, p, err := GetAppStatus("ghost"); err != nil || st != "stopped" || p != 0 {
+		t.Fatalf("GetAppStatus = %s/%d/%v, want stopped/0", st, p, err)
+	}
+	var st string
+	var p int
+	if err := db.DB.QueryRow("SELECT application_status, application_pid FROM applications WHERE application_name='ghost'").Scan(&st, &p); err != nil {
+		t.Fatal(err)
+	}
+	if st != "stopped" || p != 0 {
+		t.Errorf("not persisted: row is %s/%d", st, p)
+	}
+
+	// Reset to stale and check the other read paths and the commands that act on status.
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='ghost'", pid); err != nil {
+		t.Fatal(err)
+	}
+	apps, err := ListApps()
+	if err != nil || len(apps) != 1 || apps[0].Status != "stopped" || apps[0].PID != 0 {
+		t.Fatalf("ListApps = %+v, %v", apps, err)
+	}
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='ghost'", pid); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := GetAppDetail("ghost"); err != nil || d.Status != "stopped" || d.PID != 0 {
+		t.Fatalf("GetAppDetail = %+v, %v", d, err)
+	}
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='ghost'", pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopApp("ghost"); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("StopApp err = %v, want not running (must not signal a dead PID)", err)
+	}
+	if _, err := db.DB.Exec("UPDATE applications SET application_status='running', application_pid=? WHERE application_name='ghost'", pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteApp("ghost", false); err != nil {
+		t.Errorf("DeleteApp without force on stale app: %v", err)
 	}
 }
