@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"morrow/internal/crypto"
 	"morrow/internal/db"
@@ -128,7 +130,8 @@ func TestCreateApp(t *testing.T) {
 func TestGetAppDetailMasking(t *testing.T) {
 	setupDB(t)
 	mustCreate(t, "a", []string{"--port", "8080"}, "")
-	const secret = "s3cr3t-VALUE-xyz"
+	// Generated at runtime so no secret-looking literal lives in the source.
+	secret := "test-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	for _, e := range []struct {
 		k, v string
 		sec  bool
