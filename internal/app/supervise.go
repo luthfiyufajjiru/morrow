@@ -369,13 +369,17 @@ func Supervise(name string, req StartRequest, report io.WriteCloser, logw io.Wri
 			logf(fmt.Sprintf("[morrow] failed to record the exit: %v", err))
 			return err
 		}
-		for _, ev := range d.events {
+		// Hooks run in the background (a restart must not wait for them), but
+		// the events of one exit run in order: crash, then giveup.
+		if len(d.events) > 0 {
 			hooksRunning.Add(1)
-			go func(ev string) {
+			go func(events []string, exit ExitInfo, count int) {
 				defer hooksRunning.Done()
-				fireHooks(hooks.Event{Name: ev, App: name, AppID: a.ID, ExitCode: exit.Code, Signal: exit.Signal,
-					RestartCount: d.count, Time: time.Now().UTC()}, logf)
-			}(ev)
+				for _, ev := range events {
+					fireHooks(hooks.Event{Name: ev, App: name, AppID: a.ID, ExitCode: exit.Code, Signal: exit.Signal,
+						RestartCount: count, Time: time.Now().UTC()}, logf)
+				}
+			}(d.events, exit, d.count)
 		}
 		if !d.restart {
 			return nil

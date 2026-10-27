@@ -252,7 +252,6 @@ func startApp(name string, inlineEnvs map[string]string, resetCount bool) (int, 
 	return launchSupervisor(name, StartRequest{InlineEnvs: inlineEnvs, UserStart: resetCount})
 }
 
-
 // StopApp terminates a running application.
 func StopApp(name string) error {
 	return StopAppTimeout(name, DefaultStopTimeout)
