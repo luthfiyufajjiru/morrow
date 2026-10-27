@@ -27,6 +27,8 @@ try {
     & $m create plain ping -n $marker 127.0.0.1 | Out-Null
     & $m create --restart unless-stopped crashy ping -n $marker 127.0.0.1 | Out-Null
     & $m create --restart unless-stopped --max-restarts 2 loop cmd /c exit 3 | Out-Null
+    & $m create --restart on-failure clean cmd /c exit 0 | Out-Null
+    & $m create --restart on-failure --max-restarts 2 failing cmd /c exit 3 | Out-Null
 
     Write-Host 'stop:'
     & $m start plain | Out-Null; Start-Sleep -Milliseconds 500; $p = PidOf plain
@@ -59,6 +61,20 @@ try {
     Ok "restart replaces the process ($p1 -> $p2)" ((Status crashy) -eq 'running' -and $p2 -ne $p1 -and -not (Alive $p1))
     & $m stop crashy | Out-Null
 
+    Write-Host 'exit codes and on-failure:'
+    $hookOut = Join-Path $home_ 'hook.txt'
+    & $m hook add failing --on crash,giveup --exec "echo %MORROW_EVENT% code=%MORROW_EXIT_CODE% >> `"$hookOut`"" | Out-Null
+    & $m start clean | Out-Null; Start-Sleep -Milliseconds 1500
+    Ok 'on-failure does not restart a clean exit' ((Status clean) -eq 'exited' -and [bool]((& $m detail clean) | Select-String 'Last Exit .*exit code 0'))
+    & $m start failing | Out-Null; Start-Sleep -Seconds 5
+    Ok 'on-failure restarts exit code 3, then gives up' ((Status failing) -eq 'exited' -and [bool]((& $m logs failing) | Select-String 'gave up after 2 restarts'))
+    Ok 'log names the exit code' ([bool]((& $m logs failing) | Select-String '\(exit code 3\); restarting in 1s'))
+    $hookLines = if (Test-Path $hookOut) { Get-Content $hookOut } else { @() }
+    Ok "crash hook ran for every crash, then giveup ($($hookLines.Count) lines)" ((@($hookLines | Where-Object { $_ -match '^crash code=3' }).Count -eq 3) -and (@($hookLines | Where-Object { $_ -match '^giveup code=3' }).Count -eq 1))
+    & $m start plain | Out-Null; Start-Sleep -Milliseconds 500
+    Stop-Process -Id (PidOf plain) -Force; Start-Sleep -Milliseconds 1500
+    Ok 'detail shows the exit code of a killed app' ([bool]((& $m detail plain) | Select-String 'Last Exit .*exit code'))
+
     Write-Host 'cleanup:'
     Ok 'no stray app processes' ((Strays).Count -eq 0)
 
@@ -67,7 +83,7 @@ try {
 }
 finally {
     $ErrorActionPreference = 'Continue'
-    foreach ($a in 'plain', 'crashy', 'loop') { try { & $m stop --timeout 1s $a *> $null } catch {} }
+    foreach ($a in 'plain', 'crashy', 'loop', 'clean', 'failing') { try { & $m stop --timeout 1s $a *> $null } catch {} }
     Strays | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Remove-Item -Recurse -Force $home_ -ErrorAction SilentlyContinue
 }

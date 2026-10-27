@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -66,3 +67,6 @@ func detachRelayProcess(cmd *exec.Cmd) {
 		CreationFlags: 0x08000000,
 	}
 }
+
+// exitSignal is always empty on Windows: processes end with an exit code.
+func exitSignal(*os.ProcessState) string { return "" }

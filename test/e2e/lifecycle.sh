@@ -11,7 +11,7 @@ export MORROW_HOME="$H"
 M="$H/morrow"
 cp "$SRC" "$M" && chmod +x "$M"
 cleanup() {
-  for a in graceful stubborn crashy loop plain; do "$M" stop --timeout 1s "$a" >/dev/null 2>&1; done
+  for a in graceful stubborn crashy loop plain clean failing; do "$M" stop --timeout 1s "$a" >/dev/null 2>&1; done
   pkill -f "morrow-e2e-lifecycle" 2>/dev/null
   rm -rf "$H"
 }
@@ -69,8 +69,24 @@ echo "restart command:"
 ok "restart replaces the process ($P1 -> $P2)" "[ \"\$(status_of graceful)\" = running ] && [ \"$P2\" != \"$P1\" ] && ! kill -0 $P1 2>/dev/null"
 "$M" stop graceful >/dev/null
 
+echo "exit codes and on-failure:"
+"$M" create --restart on-failure clean /bin/sh -c "$TAG echo run X=\$X; exit 0" >/dev/null
+"$M" create --restart on-failure --max-restarts 2 failing /bin/sh -c "$TAG echo run X=\$X; exit 3" >/dev/null
+HOOK_OUT="$H/hook.txt"
+"$M" hook add failing --on crash,giveup --exec "echo \$MORROW_EVENT code=\$MORROW_EXIT_CODE restarts=\$MORROW_RESTART_COUNT >> '$HOOK_OUT'" >/dev/null
+"$M" start clean >/dev/null; sleep 1.5
+ok "on-failure does not restart a clean exit" "[ \"\$(status_of clean)\" = exited ] && [ \$(\"$M\" logs clean | grep -c 'run X=') -eq 1 ]"
+ok "detail shows the real exit code 0" "\"$M\" detail clean | grep -q 'Last Exit .*exit code 0'"
+"$M" start -e X=kept failing >/dev/null; sleep 5
+ok "on-failure restarts exit code 3, then gives up" "[ \"\$(status_of failing)\" = exited ] && [ \$(\"$M\" logs failing | grep -c 'run X=') -eq 3 ]"
+ok "start -e values survive automatic restarts" "[ \$(\"$M\" logs failing | grep -c 'run X=kept') -eq 3 ]"
+ok "log names the exit code" "\"$M\" logs failing | grep -q '(exit code 3); restarting in 1s (attempt 1/2)'"
+ok "crash hook ran for every crash, then giveup" "[ \$(grep -c '^crash code=3' '$HOOK_OUT') -eq 3 ] && grep -q '^giveup code=3 restarts=2' '$HOOK_OUT'"
+"$M" start plain >/dev/null; sleep 0.5; kill -9 "$(pid_of plain)"; sleep 1.5
+ok "detail shows death by signal" "\"$M\" detail plain | grep -q 'Last Exit .*killed by SIGKILL'"
+
 echo "cleanup:"
-ok "no stray app or relay processes" "! ps -eo args= | grep -v grep | grep -q 'morrow-e2e-lifecycle'"
+ok "no stray app or relay processes" "! ps -eo args= | grep -v grep | grep -q -e 'morrow-e2e-lifecycle' -e '$M _relay'"
 
 echo; echo "result: $pass passed, $fail failed"
 [ $fail -eq 0 ]
