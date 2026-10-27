@@ -34,6 +34,7 @@ $deployGroup = 'Morrow Deployers'
 function Cleanup {
     $ErrorActionPreference = 'Continue'
     try { & $m stop api *> $null } catch {}
+    try { & $m stop runas *> $null } catch {}
     Get-Process demo-api -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     try { & net user $user /delete *> $null } catch {}
     try { & net user $outsider /delete *> $null } catch {}
@@ -195,6 +196,26 @@ try {
     function GroupExists { & net localgroup $deployGroup *> $null; $LASTEXITCODE -eq 0 }
     $backup = Join-Path $env:TEMP 'morrow-e2e-key.bak'
     Remove-Item -Force $backup -ErrorAction SilentlyContinue
+
+    Write-Host "`nrun as a dedicated account (as Administrator):"
+    $env:MORROW_E2E_PW = $plainPw
+    # %USERNAME% is expanded by cmd.exe in the app, from the account's own environment.
+    & $m create --user $user --password-env MORROW_E2E_PW runas cmd /c "echo user=%USERNAME% & ping -n 10013 127.0.0.1" | Out-Null
+    Remove-Item Env:MORROW_E2E_PW
+    & $m start runas | Out-Null; Start-Sleep -Seconds 3
+    $rpid = [int](((& $m status runas) | Select-String '^PID: (\d+)').Matches[0].Groups[1].Value)
+    $rproc = Get-CimInstance Win32_Process -Filter "ProcessId = $rpid"
+    $rowner = if ($rproc) { (Invoke-CimMethod -InputObject $rproc -MethodName GetOwner).User } else { '' }
+    PassIf "app process runs as $user, not Administrator ($rowner)" ($rowner -eq $user)
+    $runasLog = ((& $m logs runas 2>&1) | Out-String)
+    $seesSelf = $runasLog -match "user=$user"
+    PassIf "app sees its own account's environment (output reaches the log)" $seesSelf
+    if (-not $seesSelf) { Write-Host "  runas log:`n$runasLog" }
+    PassIf 'detail shows the account' ([bool]((& $m detail runas) | Select-String "Run As .*$user"))
+    $stored = (& $m detail runas --json) -join ' '
+    PassIf 'the password is never shown' (-not $stored.Contains($plainPw))
+    & $m stop runas | Out-Null
+    PassIf "stop works for the account's process" ((-not (Get-Process -Id $rpid -ErrorAction SilentlyContinue)) -and (((& $m status runas) -join ' ') -match 'stopped'))
 
     Write-Host "`nuninstall, as ${user}:"
     Check deny 'uninstall'                         "& `$m uninstall --yes$exit" 'requires elevation'

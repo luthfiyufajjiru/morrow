@@ -99,6 +99,24 @@ sudo morrow update --max-restarts 10 api /srv/api/server        # default 5
 
 Restarts wait 1s, 2s, 4s, ... (at most a minute) and give up after `--max-restarts` restarts in a row; an app that ran for at least a minute before exiting starts counting from zero again. While it waits the status is `restarting`, and `morrow stop` cancels the restart. Each restart re-reads the app's variables, so a rotated secret takes effect, and keeps the `start -e` values. Every decision is written to the app's log, e.g. `[morrow] exited unexpectedly after 3s (exit code 1); restarting in 2s (attempt 2/5)`.
 
+**Running as a dedicated account.** On a system install apps run as root/Administrator unless you say otherwise. Run each app as its own unprivileged account, so a compromised app cannot read the master key, other apps' data or anything root owns:
+
+```bash
+sudo useradd --system --no-create-home svc-api                 # once
+sudo morrow create --user svc-api -w /srv/api api /srv/api/server
+sudo morrow update --user "" api /srv/api/server              # back to root
+```
+
+The supervisor stays root (it writes the logs and decrypts the app's secured variables, which the app still receives), and only the app runs as `svc-api`, with that account's `HOME`/`USER`. The account needs read access to the executable and the working directory.
+
+On **Windows**, starting a process as another account needs its password. Pass it through an environment variable, so it never appears on the command line; Morrow stores it encrypted with the master key:
+
+```powershell
+$env:SVC_PW = '...'; morrow create --user svc-api --password-env SVC_PW api C:\srv\api\server.exe; Remove-Item Env:SVC_PW
+```
+
+The account must be allowed to log on as a batch job or locally. `morrow detail` shows the account but never the password. If you change the account's password, run `morrow update --user ... --password-env ...` again.
+
 **Alerts.** Hooks run a command or call a webhook when an app exits unexpectedly:
 
 ```bash
@@ -208,7 +226,7 @@ morrow inbox
 | Every value | no control characters or newlines, valid UTF-8, at most 4 KiB |
 | Every file | must be a plain file (no symlinks or hard links), at most 64 KiB, sealed for this install, unchanged, and not seen before (no replays) |
 
-> **Limit.** Apps on a system install run as root/Administrator. These checks stop the known ways an environment variable makes programs run other code, but Morrow cannot know what *your* app does with a value. If it treats a granted variable as a file path to load or a command to run, a malicious value could still run as root. Grant only data-like variables (tokens, passwords, URLs, flags) and use the strictest format that fits. Running each app as its own unprivileged user is planned and would remove this risk.
+> **Limit.** Apps on a system install run as root/Administrator. These checks stop the known ways an environment variable makes programs run other code, but Morrow cannot know what *your* app does with a value. If it treats a granted variable as a file path to load or a command to run, a malicious value could still run as root. Grant only data-like variables (tokens, passwords, URLs, flags) and use the strictest format that fits. Run apps that accept submitted variables with `--user` (section 2) so such a value runs as that unprivileged account, not as root.
 
 ## 6. Keys, backups and recovery
 

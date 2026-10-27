@@ -17,6 +17,7 @@ func TestSkipPreRun(t *testing.T) {
 		{&cobra.Command{Use: "init"}, true},
 		{&cobra.Command{Use: "uninstall"}, true},
 		{&cobra.Command{Use: "_relay"}, true},
+		{&cobra.Command{Use: "_runas-exec"}, true},
 		{&cobra.Command{Use: cobra.ShellCompRequestCmd}, true},
 		{&cobra.Command{Use: cobra.ShellCompNoDescRequestCmd}, true},
 		{bash, true},

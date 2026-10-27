@@ -25,6 +25,29 @@ var workDir string
 var restartPolicy string
 var maxRestarts int
 var stopTimeout time.Duration
+var runAs string
+var passwordEnv string
+
+// applyRunAsFlags sets the run-as account when --user was given. The Windows
+// password comes from the environment variable named by --password-env, so it
+// never appears on the command line.
+func applyRunAsFlags(cmd *cobra.Command, name string) error {
+	if !cmd.Flags().Changed("user") {
+		if passwordEnv != "" {
+			return fmt.Errorf("--password-env only applies together with --user")
+		}
+		return nil
+	}
+	password := ""
+	if passwordEnv != "" {
+		v, ok := os.LookupEnv(passwordEnv)
+		if !ok {
+			return fmt.Errorf("environment variable %s (from --password-env) is not set", passwordEnv)
+		}
+		password = v
+	}
+	return app.SetRunAs(name, runAs, password)
+}
 
 // applyRestartFlags sets the restart policy when --restart or --max-restarts
 // was given, keeping the current value of the other one.
@@ -67,6 +90,10 @@ var CreateAppCmd = &cobra.Command{
 		if err := applyRestartFlags(cmd, name); err != nil {
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
+		if err := applyRunAsFlags(cmd, name); err != nil {
+			_ = app.DeleteApp(name, false) // do not leave a half-configured app behind
+			log.Fatalf("Error: %v", privilege.Hint(err))
+		}
 		fmt.Printf("Successfully created application %s\n", name)
 	},
 }
@@ -97,6 +124,11 @@ var DetailAppCmd = &cobra.Command{
 		fmt.Printf("| %-26s | %-40s |\n", "Executable Path", detail.ExecutablePath)
 		fmt.Printf("| %-26s | %-40s |\n", "Arguments", strings.Join(detail.Arguments, " "))
 		fmt.Printf("| %-26s | %-40s |\n", "Working Directory", detail.WorkingDir)
+		runAsText := detail.RunAs
+		if runAsText == "" {
+			runAsText = "(the supervisor's account)"
+		}
+		fmt.Printf("| %-26s | %-40s |\n", "Run As", runAsText)
 		fmt.Printf("| %-26s | %-40s |\n", "Restart Policy",
 			fmt.Sprintf("%s (max %d, restarted %d)", detail.RestartPolicy, detail.MaxRestarts, detail.RestartCount))
 		if detail.LastExitCode != nil {
@@ -242,6 +274,9 @@ var UpdateAppCmd = &cobra.Command{
 		if err := applyRestartFlags(cmd, name); err != nil {
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
+		if err := applyRunAsFlags(cmd, name); err != nil {
+			log.Fatalf("Error: %v", privilege.Hint(err))
+		}
 		fmt.Printf("Successfully updated application %s\n", name)
 	},
 }
@@ -321,6 +356,12 @@ func init() {
 		c.Flags().IntVar(&maxRestarts, "max-restarts", 5,
 			"With a restart policy: give up after this many restarts in a row (an app that ran 60s+ resets the count)")
 		_ = c.RegisterFlagCompletionFunc("restart", cobra.FixedCompletions([]string{app.PolicyNo, app.PolicyOnFailure, app.PolicyUnlessStopped}, cobra.ShellCompDirectiveNoFileComp))
+	}
+	for _, c := range []*cobra.Command{CreateAppCmd, UpdateAppCmd} {
+		c.Flags().StringVar(&runAs, "user", "",
+			"Run the app as this account instead of root/Administrator (empty clears it); Windows also needs --password-env")
+		c.Flags().StringVar(&passwordEnv, "password-env", "",
+			"Windows: name of an environment variable holding the --user account's password (stored encrypted)")
 	}
 	for _, c := range []*cobra.Command{StopAppCmd, RestartAppCmd} {
 		c.Flags().DurationVar(&stopTimeout, "timeout", app.DefaultStopTimeout,

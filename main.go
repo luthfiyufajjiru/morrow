@@ -7,6 +7,7 @@ import (
 	"morrow/cmd/hook"
 	"morrow/cmd/inbox"
 	"morrow/cmd/relay"
+	"morrow/cmd/runasexec"
 )
 
 func main() {
@@ -38,6 +39,7 @@ func main() {
 		cmd.BootCmd,
 		cmd.ShutdownCmd,
 		relay.RelayCmd,
+		runasexec.RunAsExecCmd,
 	)
 	cmd.Execute()
 }

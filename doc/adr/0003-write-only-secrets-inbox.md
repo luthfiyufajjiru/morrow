@@ -27,6 +27,6 @@ Alternatives considered:
 ## Consequences
 - Pipelines can rotate granted secrets on both OSes and cannot read any secret. CI (`test/e2e/escalation.*`) proves this end to end.
 - A compromised pipeline can still overwrite the secrets it was granted (integrity, not confidentiality, is delegated).
-- Validation reduces but cannot eliminate code-execution risk: an app may treat a granted variable as code or a path. Documented; the complete fix is running apps as dedicated users (future work).
+- Validation reduces but cannot eliminate code-execution risk: an app may treat a granted variable as code or a path. Documented; running such apps with `morrow create --user <account>` (added later) contains it to that account.
 - On Windows, apps restarted by `apply` run as SYSTEM.
 - Adds a dependency on `golang.org/x/crypto` and a database migration (`000004`).
