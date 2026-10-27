@@ -206,7 +206,10 @@ try {
     $rproc = Get-CimInstance Win32_Process -Filter "ProcessId = $rpid"
     $rowner = if ($rproc) { (Invoke-CimMethod -InputObject $rproc -MethodName GetOwner).User } else { '' }
     PassIf "app process runs as $user, not Administrator ($rowner)" ($rowner -eq $user)
-    PassIf 'app sees its own account' ([bool]((& $m logs runas) | Select-String "\\$user"))
+    $runasLog = ((& $m logs runas 2>&1) | Out-String)
+    $seesSelf = $runasLog -match [regex]::Escape("\$user")
+    PassIf 'app sees its own account' $seesSelf
+    if (-not $seesSelf) { Write-Host "  runas log:`n$runasLog" }
     PassIf 'detail shows the account' ([bool]((& $m detail runas) | Select-String "Run As .*$user"))
     $stored = (& $m detail runas --json) -join ' '
     PassIf 'the password is never shown' (-not $stored.Contains($plainPw))
