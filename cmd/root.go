@@ -68,7 +68,7 @@ func RegisterCommands(cmds ...*cobra.Command) {
 // requests sent on every Tab press).
 func skipPreRun(cmd *cobra.Command) bool {
 	switch cmd.Name() {
-	case "init", "help", "_relay", "uninstall", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+	case "init", "help", "_relay", "_runas-exec", "uninstall", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 		return true
 	}
 	return cmd.HasParent() && cmd.Parent().Name() == "completion"

@@ -4,10 +4,12 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -74,10 +76,13 @@ func logon(account, password string) (windows.Token, error) {
 	return 0, fmt.Errorf("cannot log on as %s: %w", account, lastErr)
 }
 
-// tokenChild is a process created for another account.
+// tokenChild is the run-as helper process for another account; its exit
+// code is the app's.
 type tokenChild struct {
-	pid int
-	h   windows.Handle
+	pid       int
+	h         windows.Handle
+	unblock   func()
+	forwarded chan struct{}
 }
 
 func (c tokenChild) Pid() int { return c.pid }
@@ -86,6 +91,12 @@ func (c tokenChild) Wait() ExitInfo {
 	defer windows.CloseHandle(c.h)
 	if _, err := windows.WaitForSingleObject(c.h, windows.INFINITE); err != nil {
 		return ExitInfo{Code: -1}
+	}
+	// If the helper died before connecting, release the waiting forwarder.
+	select {
+	case <-c.forwarded:
+	case <-time.After(100 * time.Millisecond):
+		c.unblock()
 	}
 	var code uint32
 	if err := windows.GetExitCodeProcess(c.h, &code); err != nil {
@@ -151,10 +162,6 @@ func startChild(cmd *exec.Cmd, extra []string, account, password string) (child,
 		return nil, fmt.Errorf("cannot load the environment of %s: %w", account, err)
 	}
 	block := envBlock(mergeEnv(append(userEnv, extra...)))
-	cmdline, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(append([]string{cmd.Path}, cmd.Args[1:]...)))
-	if err != nil {
-		return nil, err
-	}
 	var cwd *uint16
 	if cmd.Dir != "" {
 		if cwd, err = windows.UTF16PtrFromString(cmd.Dir); err != nil {
@@ -166,34 +173,76 @@ func startChild(cmd *exec.Cmd, extra []string, account, password string) (child,
 	if !ok {
 		return nil, fmt.Errorf("internal error: output is not a file")
 	}
-	nul, err := os.Open(os.DevNull)
+
+	// Standard handles do not survive CreateProcessWithTokenW, so the app's
+	// output travels through a named pipe that only this account (and
+	// SYSTEM/Administrators) may open: the helper `morrow _runas-exec`, started
+	// as the account, connects to it and runs the app with it as stdout/stderr.
+	sid, _, _, err := windows.LookupSID("", account)
+	if err != nil {
+		return nil, fmt.Errorf("unknown account %q: %w", account, err)
+	}
+	pipeName := fmt.Sprintf(`\\.\pipe\morrow-runas-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;" + sid.String() + ")")
 	if err != nil {
 		return nil, err
 	}
-	defer nul.Close()
-	outH, nulH := windows.Handle(out.Fd()), windows.Handle(nul.Fd())
-	for _, h := range []windows.Handle{outH, nulH} {
-		if err := windows.SetHandleInformation(h, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
-			return nil, err
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	namePtr, _ := windows.UTF16PtrFromString(pipeName)
+	pipe, err := windows.CreateNamedPipe(namePtr, windows.PIPE_ACCESS_INBOUND|windows.FILE_FLAG_FIRST_PIPE_INSTANCE,
+		windows.PIPE_TYPE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS, 1, 4096, 4096, 0, sa)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create the output pipe: %w", err)
+	}
+	// Keep our own copy of the log pipe: the caller closes its handle as
+	// soon as we return.
+	var dup windows.Handle
+	self := windows.CurrentProcess()
+	if err := windows.DuplicateHandle(self, windows.Handle(out.Fd()), self, &dup, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		windows.CloseHandle(pipe)
+		return nil, err
+	}
+	logPipe := os.NewFile(uintptr(dup), "log")
+	forwarded := make(chan struct{})
+	go func() {
+		defer close(forwarded)
+		defer logPipe.Close()
+		if err := windows.ConnectNamedPipe(pipe, nil); err != nil && err != windows.ERROR_PIPE_CONNECTED {
+			windows.CloseHandle(pipe)
+			return
+		}
+		src := os.NewFile(uintptr(pipe), "app-output")
+		_, _ = io.Copy(logPipe, src)
+		src.Close()
+	}()
+	// unblock lets a pending ConnectNamedPipe return if the helper never connected.
+	unblock := func() {
+		if c, err := windows.CreateFile(namePtr, windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, 0, 0); err == nil {
+			windows.CloseHandle(c)
 		}
 	}
-	defer windows.SetHandleInformation(outH, windows.HANDLE_FLAG_INHERIT, 0)
 
-	si := windows.StartupInfo{
-		Flags:      windows.STARTF_USESTDHANDLES | windows.STARTF_USESHOWWINDOW,
-		ShowWindow: windows.SW_HIDE,
-		StdInput:   nulH,
-		StdOutput:  outH,
-		StdErr:     outH,
+	selfExe, err := os.Executable()
+	if err != nil {
+		unblock()
+		return nil, err
 	}
+	line := append([]string{selfExe, "_runas-exec", pipeName, "--", cmd.Path}, cmd.Args[1:]...)
+	cmdline, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(line))
+	if err != nil {
+		unblock()
+		return nil, err
+	}
+	si := windows.StartupInfo{Flags: windows.STARTF_USESHOWWINDOW, ShowWindow: windows.SW_HIDE}
 	si.Cb = uint32(unsafe.Sizeof(si))
 	var pi windows.ProcessInformation
 	r, _, callErr := procCreateProcessWithTokenW.Call(uintptr(tok), logonWithProfile, 0, uintptr(unsafe.Pointer(cmdline)),
 		createNoWindow|windows.CREATE_UNICODE_ENVIRONMENT|windows.CREATE_NEW_PROCESS_GROUP,
 		uintptr(unsafe.Pointer(&block[0])), uintptr(unsafe.Pointer(cwd)), uintptr(unsafe.Pointer(&si)), uintptr(unsafe.Pointer(&pi)))
 	if r == 0 {
+		unblock()
 		return nil, fmt.Errorf("cannot start the app as %s: %w", account, callErr)
 	}
 	windows.CloseHandle(pi.Thread)
-	return tokenChild{pid: int(pi.ProcessId), h: pi.Process}, nil
+	return tokenChild{pid: int(pi.ProcessId), h: pi.Process, unblock: unblock, forwarded: forwarded}, nil
 }
