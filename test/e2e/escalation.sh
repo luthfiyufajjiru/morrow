@@ -136,6 +136,22 @@ pass_if() {
   if sh -c "$2"; then pass=$((pass+1)); echo "PASS  $1"; else fail=$((fail+1)); echo "FAIL  $1"; fi
 }
 demo_running="ps -eo args= | grep -q '^$BIN/demo-api'"
+
+# --- Run as a dedicated account -------------------------------------------------
+echo; echo "run as a dedicated account (as root):"
+$M create --user nobody runas /bin/sh -c ': morrow-e2e-runas; echo whoami=$(id -un); cat /etc/morrow/.morrow.key >/dev/null 2>&1; echo key-read=$?; echo token=${API_TOKEN:+set}; while :; do sleep 0.2; done' >/dev/null
+$M set-env runas API_TOKEN:s=runas-secret-123 >/dev/null
+$M start runas >/dev/null; sleep 1
+RPID=$($M status runas | sed -n 's/^PID: //p')
+pass_if "app process runs as nobody, not root" "[ \"\$(ps -o user= -p $RPID | tr -d ' ')\" = nobody ]"
+pass_if "app sees its own account" "$M logs runas | grep -q 'whoami=nobody'"
+pass_if "app cannot read the master key" "$M logs runas | grep -q 'key-read=1'"
+pass_if "secured variables are still delivered" "$M logs runas | grep -q 'token=set'"
+pass_if "detail shows the account" "$M detail runas | grep -q 'Run As .*nobody'"
+$M stop runas >/dev/null
+pass_if "stop works for the account's process" "! kill -0 $RPID 2>/dev/null && [ \"\$($M status runas | sed -n 's/^Status: //p')\" = stopped ]"
+check deny "a regular user cannot change the account" "$M update --user root runas /bin/true" "$HINT"
+
 echo; echo "uninstall, as $U:"
 check deny "uninstall"                             "$M uninstall --yes" "requires elevation"
 check deny "uninstall --purge"                     "$M uninstall --purge --yes" "requires elevation"

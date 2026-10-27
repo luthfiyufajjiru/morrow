@@ -117,7 +117,7 @@ Open a new shell afterwards. Completion works before `init` and for regular user
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
 | List environment variables | `morrow list-env <app-name>` |
 | List All Applications | `morrow list` |
-| Create Application | `morrow create [-w <workdir>] [--restart no\|on-failure\|unless-stopped] [--max-restarts N] <app-name> <exec-path> <args...>` |
+| Create Application | `morrow create [-w <workdir>] [--restart no\|on-failure\|unless-stopped] [--max-restarts N] [--user <account> [--password-env VAR]] <app-name> <exec-path> <args...>` |
 | Delete Application | `morrow delete <app-name>` |
 | Start Application | `morrow start <app-name> [-e KEY=VALUE...]` |
 | Stop Application (SIGTERM, wait, then kill) | `morrow stop [--timeout 10s] <app-name>` |
@@ -272,7 +272,7 @@ API_TOKEN="$CI_API_TOKEN" morrow submit-env api API_TOKEN --restart
 morrow inbox                                         # outcome, never the value
 ```
 
-The pipeline seals each value with the install's public key and drops it into a folder it can write but not read. `morrow apply`, run by a systemd unit (Linux) or scheduled task (Windows), checks the file's owner against the grants, rejects names that make programs load code (`PATH`, `LD_*`, `NODE_OPTIONS`, ...), enforces the granted value format, and stores the value. Apps still run as root/Administrator, so grant only data-like variables with the strictest format; see the [tutorial](doc/tutorial.md#5-let-a-pipeline-set-secrets-it-cannot-read) and [ADR 0003](doc/adr/0003-write-only-secrets-inbox.md) for the full model and its limits.
+The pipeline seals each value with the install's public key and drops it into a folder it can write but not read. `morrow apply`, run by a systemd unit (Linux) or scheduled task (Windows), checks the file's owner against the grants, rejects names that make programs load code (`PATH`, `LD_*`, `NODE_OPTIONS`, ...), enforces the granted value format, and stores the value. Grant only data-like variables with the strictest format, and run such apps with `--user` so nothing they do runs as root; see the [tutorial](doc/tutorial.md#5-let-a-pipeline-set-secrets-it-cannot-read) and [ADR 0003](doc/adr/0003-write-only-secrets-inbox.md) for the full model and its limits.
 
 ## Security
 Morrow supports encrypted environment variable storage using the `--secured` (or `-s`) flag. 

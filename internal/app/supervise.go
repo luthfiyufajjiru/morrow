@@ -150,17 +150,20 @@ func launchSupervisor(name string, req StartRequest) (int, error) {
 
 // buildCommand prepares the app's process: executable, arguments, working
 // directory and environment (stored variables, then one-off ones).
-func buildCommand(a *Application, envs []env.EnvVar, inline map[string]string) *exec.Cmd {
+// It also returns the app-specific variables on their own, for run-as
+// launches that start from the target account's environment instead.
+func buildCommand(a *Application, envs []env.EnvVar, inline map[string]string) (*exec.Cmd, []string) {
 	cmd := exec.Command(a.ExecutablePath, a.Arguments...)
 	cmd.Dir = a.WorkingDir
-	cmd.Env = append(os.Environ(), "MORROW_APP_ID="+a.ID, "MORROW_APP_NAME="+a.Name)
+	extra := []string{"MORROW_APP_ID=" + a.ID, "MORROW_APP_NAME=" + a.Name}
 	for _, e := range envs {
-		cmd.Env = append(cmd.Env, e.Name+"="+e.Value)
+		extra = append(extra, e.Name+"="+e.Value)
 	}
 	for k, v := range inline {
-		cmd.Env = append(cmd.Env, k+"="+v)
+		extra = append(extra, k+"="+v)
 	}
-	return cmd
+	cmd.Env = append(os.Environ(), extra...)
+	return cmd, extra
 }
 
 // ExitInfo describes how a process ended.
@@ -316,16 +319,19 @@ func Supervise(name string, req StartRequest, report io.WriteCloser, logw io.Wri
 				}
 			}
 		}
-		var cmd *exec.Cmd
+		var secret string
+		if err == nil && a.RunAs != "" {
+			secret, err = runAsSecret(name)
+		}
+		var ch child
 		var pr, pw *os.File
 		if err == nil {
-			cmd = buildCommand(a, envs, req.InlineEnvs)
 			pr, pw, err = os.Pipe()
 		}
 		if err == nil {
+			cmd, extra := buildCommand(a, envs, req.InlineEnvs)
 			cmd.Stdout, cmd.Stderr = pw, pw
-			detachProcess(cmd)
-			err = cmd.Start()
+			ch, err = startChild(cmd, extra, a.RunAs, secret)
 			pw.Close()
 			if err != nil {
 				pr.Close()
@@ -343,7 +349,7 @@ func Supervise(name string, req StartRequest, report io.WriteCloser, logw io.Wri
 
 		copied := make(chan struct{})
 		go func() { _, _ = io.Copy(logw, pr); pr.Close(); close(copied) }()
-		pid := cmd.Process.Pid
+		pid := ch.Pid()
 		if err := recordRunning(name, pid, first && req.UserStart); err != nil {
 			_ = forceKill(pid)
 			reportf("error " + err.Error())
@@ -357,8 +363,7 @@ func Supervise(name string, req StartRequest, report io.WriteCloser, logw io.Wri
 		}
 
 		started := time.Now()
-		_ = cmd.Wait()
-		exit := exitInfo(cmd.ProcessState)
+		exit := ch.Wait()
 		select {
 		case <-copied:
 		case <-time.After(drainTimeout):
