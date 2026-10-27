@@ -57,7 +57,7 @@ Its data lives outside the binary's directory, so upgrading or reinstalling the 
 | Database | `/var/lib/morrow/morrow.db` | `%ProgramData%\Morrow\morrow.db` |
 | Logs | `/var/log/morrow/` | `%ProgramData%\Morrow\logs\` |
 
-`init` creates these directories: `/var/lib/morrow` and `/var/log/morrow` are `0755`; on Windows `%ProgramData%\Morrow` gets an explicit ACL (full control for SYSTEM and Administrators, read for Users), so regular users can read but not change the data.
+`init` creates these directories. Only the database directory is readable by regular users (`/var/lib/morrow` is `0755`; on Windows `%ProgramData%\Morrow` gets an explicit ACL with full control for SYSTEM and Administrators and read for Users), so read-only commands work without elevation. The logs directory is root/Administrators only (`/var/log/morrow` is `0700`; `%ProgramData%\Morrow\logs` has no Users entry), because apps may print secrets.
 
 **Per-user install** needs no elevation: point `MORROW_HOME` at a directory you own. The database, key and `logs/` all live there, and `init` creates it if needed.
 ```bash
