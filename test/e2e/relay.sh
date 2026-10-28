@@ -92,10 +92,14 @@ ok "exactly one copy runs" "sleep 0.5; [ \$(copies racer) -eq 1 ] && [ \$(relays
 # move_charge so the relay's memory moves with it).
 if [ "$(id -u)" = 0 ]; then
   if [ -w /sys/fs/cgroup/cgroup.procs ] && grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
-    CG=/sys/fs/cgroup/morrow-e2e-oom; mkdir -p "$CG"; LIMIT=memory.max; EVENTS=memory.events
+    # v2 does not move the relay's existing memory with it, so only a limit of
+    # 0 makes its next allocation fail.
+    CG=/sys/fs/cgroup/morrow-e2e-oom; mkdir -p "$CG"; LIMIT=memory.max; EVENTS=memory.events; STEPS="0"
     grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control
   elif [ -d /sys/fs/cgroup/memory ] && [ -w /sys/fs/cgroup/memory/cgroup.procs ]; then
     CG=/sys/fs/cgroup/memory/morrow-e2e-oom; mkdir -p "$CG"; LIMIT=memory.limit_in_bytes; EVENTS=memory.oom_control
+    # A single limit far below usage is refused (EBUSY): step down.
+    STEPS="8M 4M 2M 1M 512K 256K 128K 64K"
     echo 1 > "$CG/memory.move_charge_at_immigrate"
   fi
 fi
@@ -105,8 +109,7 @@ if [ -n "$CG" ]; then
   "$M" start chatty >/dev/null; sleep 0.5
   R=$(relay_of chatty)
   echo "$R" > "$CG/cgroup.procs"
-  # Step down: a single limit far below usage is refused (EBUSY) on cgroup v1.
-  for l in 8M 4M 2M 1M 512K 256K 128K 64K; do
+  for l in $STEPS; do
     kill -0 "$R" 2>/dev/null || break
     echo "$l" > "$CG/$LIMIT" 2>/dev/null; sleep 0.5
   done

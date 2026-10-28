@@ -28,8 +28,9 @@ func orphan(t *testing.T) (leader *exec.Cmd, childAlive func() bool) {
 			childPID = childPID*10 + int(c-'0')
 		}
 	}
-	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); _ = cmd.Wait() })
-	go func() { _ = cmd.Wait() }()
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }() // reaps it, so waitExit sees it gone
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); <-done })
 	return cmd, func() bool { return syscall.Kill(childPID, 0) == nil }
 }
 
