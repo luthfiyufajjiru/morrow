@@ -142,6 +142,16 @@ At every boot it starts the apps you started and did not stop yourself: `morrow 
 - **Windows:** a scheduled task, `Morrow\Startup`, that runs as SYSTEM shortly after startup. Apps it starts run in the services session, so they keep running when users log off. Apps you start yourself from an Administrator terminal run in your session and may stop when you log off; a reboot (or `schtasks /Run /TN Morrow\Startup` after stopping them) moves them to SYSTEM.
 - `sudo morrow startup --remove` uninstalls the hook without stopping anything.
 
+**Start after the database.** The unit waits for the network (`network-online.target`), not for local services. If an app needs one, such as PostgreSQL on the same machine, order the unit after it, or the app may start first, fail, and use up its `--max-restarts` before the database is ready:
+
+```bash
+sudo morrow startup --after postgresql.service                 # repeat --after for each service
+sudo morrow startup --after postgresql.service --after redis-server.service
+grep -E '^(Wants|After)=' /etc/systemd/system/morrow.service   # check
+```
+
+A bare name means a service (`--after postgresql` is `postgresql.service`). `--after` adds both `Wants=` (start that service too) and `After=` (wait until it has started), and at shutdown systemd stops the apps before that service. Running `morrow startup` again rewrites the unit, so repeat every `--after` you need. `--after` only waits for the service to report started. On Debian, `postgresql.service` reports started once the server accepts connections. For a service that reports started earlier, also have the app retry its connections or give it `--restart on-failure` with enough `--max-restarts`. Windows has no `--after`: the task starts 15 seconds after boot.
+
 ## 3. Environment variables and secrets
 
 ```bash

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -17,16 +18,43 @@ var unitDir = "/etc/systemd/system"
 
 const unitName = "morrow.service"
 
+// unitPattern is a systemd unit name: allowed characters and a unit type suffix.
+var unitPattern = regexp.MustCompile(`^[A-Za-z0-9:_.\\@-]+\.(service|socket|target|mount|device|path|timer|swap|slice|scope|automount)$`)
+
+// Units validates the units to order after; a name without a type gets
+// ".service", so "postgresql" means postgresql.service.
+func Units(names []string) ([]string, error) {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n != "" && !strings.Contains(n, ".") {
+			n += ".service"
+		}
+		if !unitPattern.MatchString(n) {
+			return nil, fmt.Errorf("invalid systemd unit name %q (e.g. postgresql.service)", n)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 // Unit renders the systemd unit. It is a oneshot that stays active, so
 // systemd runs ExecStop at shutdown; KillMode=process keeps the detached
 // apps out of systemd's own stop, letting ExecStop stop them gracefully.
-func Unit(exe string) string {
+// after lists local services (e.g. postgresql.service) that must be up
+// before the apps start. Being ordered after them also means, at shutdown,
+// the apps are stopped before those services.
+func Unit(exe string, after []string) string {
+	deps := ""
+	for _, u := range after {
+		deps += "Wants=" + u + "\nAfter=" + u + "\n"
+	}
 	return fmt.Sprintf(`[Unit]
 Description=Morrow: start apps at boot, stop them gracefully at shutdown
 Documentation=https://github.com/luthfiyufajjiru/morrow/wiki
 Wants=network-online.target
 After=network-online.target
-
+%[2]s
 [Service]
 Type=oneshot
 RemainAfterExit=yes
@@ -37,7 +65,7 @@ KillMode=process
 
 [Install]
 WantedBy=multi-user.target
-`, exe)
+`, exe, deps)
 }
 
 func systemdRunning() bool {
@@ -54,12 +82,17 @@ func Installed() (string, bool) {
 }
 
 // Install writes, enables and starts the unit (starting it runs _boot, which
-// only starts wanted apps that are not running).
-func Install(exe string) (string, error) {
+// only starts wanted apps that are not running). It replaces any previous
+// unit, so after must list every service to order after.
+func Install(exe string, after []string) (string, error) {
+	after, err := Units(after)
+	if err != nil {
+		return "", err
+	}
 	if !systemdRunning() {
 		return "", errors.New("systemd is not running here; run 'morrow _boot' as root from your init system at boot instead")
 	}
-	if err := os.WriteFile(filepath.Join(unitDir, unitName), []byte(Unit(exe)), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(unitDir, unitName), []byte(Unit(exe, after)), 0644); err != nil {
 		return "", err
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", unitName}} {
@@ -67,7 +100,11 @@ func Install(exe string) (string, error) {
 			return "", fmt.Errorf("systemctl %s failed: %v: %s", strings.Join(args, " "), err, out)
 		}
 	}
-	return "systemd unit " + unitName, nil
+	desc := "systemd unit " + unitName
+	if len(after) > 0 {
+		desc += " (after " + strings.Join(after, ", ") + ")"
+	}
+	return desc, nil
 }
 
 // Remove disables and deletes the unit without stopping any app: _shutdown

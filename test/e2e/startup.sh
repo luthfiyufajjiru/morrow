@@ -46,6 +46,12 @@ echo "install:"
 "$M" startup >/dev/null
 ok "unit installed, enabled and active" "systemctl is-enabled morrow.service >/dev/null && systemctl is-active morrow.service >/dev/null"
 ok "--status lists the wanted apps only" "\"$M\" startup --status | grep -q 'Apps started at boot: api, web'"
+ok "--after rejects a name that is not a unit" "! \"$M\" startup --after 'x.service
+ExecStartPre=/bin/false' >/dev/null 2>&1 && ! grep -q ExecStartPre /etc/systemd/system/morrow.service"
+"$M" startup --after systemd-journald.service --after systemd-tmpfiles-setup >/dev/null
+ok "--after orders the unit after local services" "systemctl show -p After --value morrow.service | tr ' ' '\n' | grep -qx systemd-journald.service && systemctl show -p After --value morrow.service | tr ' ' '\n' | grep -qx systemd-tmpfiles-setup.service && systemctl show -p Wants --value morrow.service | tr ' ' '\n' | grep -qx systemd-journald.service"
+"$M" startup >/dev/null
+ok "a plain reinstall drops --after" "! grep -q 'After=systemd-journald' /etc/systemd/system/morrow.service && systemctl is-active morrow.service >/dev/null"
 
 echo "after a simulated reboot:"
 A1=$(pid_of api); power_loss

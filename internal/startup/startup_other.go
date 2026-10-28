@@ -9,7 +9,7 @@ import "errors"
 func Installed() (string, bool) { return "", false }
 
 // Install is not available on this OS.
-func Install(string) (string, error) {
+func Install(string, []string) (string, error) {
 	return "", errors.New("no automatic startup on this OS; run 'sudo morrow _boot' at boot, " +
 		"e.g. from a launchd daemon with RunAtLoad")
 }
