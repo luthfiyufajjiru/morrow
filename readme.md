@@ -285,3 +285,6 @@ Morrow supports encrypted environment variable storage using the `--secured` (or
 
 
 
+
+## License
+Morrow is released under the [MIT License](LICENSE). Copyright (c) 2026 Luthfi Yufajjiru.
