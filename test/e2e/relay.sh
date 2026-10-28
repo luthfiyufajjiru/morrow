@@ -16,7 +16,7 @@ chmod 755 "$H"
 export MORROW_HOME="$H"
 M="$H/morrow"
 cp "$SRC" "$M" && chmod +x "$M"
-APPS="quiet chatty stubborn looping racer"
+APPS="quiet chatty stubborn looping racer noisy"
 CG=""
 cleanup() {
   for a in $APPS; do "$M" stop --timeout 1s "$a" >/dev/null 2>&1; done
@@ -48,6 +48,7 @@ tag() { echo ": morrow-e2e-relay-$1;"; }
 "$M" create $U --restart on-failure stubborn /bin/sh -c "$(tag stubborn) trap '' TERM; sh -c 'while :; do sleep 1; done' morrow-e2e-relay-stubborn-child & while :; do sleep 0.2; done" >/dev/null
 "$M" create $U --restart on-failure --max-restarts 10 looping /bin/sh -c "$(tag looping) exit 3" >/dev/null
 "$M" create $U racer /bin/sh -c "$(tag racer) while :; do sleep 1; done" >/dev/null
+"$M" create $U noisy /bin/sh -c "$(tag noisy) while :; do head -c 65536 /dev/zero | tr '\0' x; echo; sleep 0.1; done" >/dev/null
 [ -n "$RUNAS" ] && echo "(apps run as $RUNAS)"
 
 for a in quiet chatty; do
@@ -104,10 +105,9 @@ if [ "$(id -u)" = 0 ]; then
   fi
 fi
 if [ -n "$CG" ]; then
-  echo "chatty: OOM-kill the relay (an idle relay touches no new memory; this one copies output):"
-  "$M" stop chatty >/dev/null
-  "$M" start chatty >/dev/null; sleep 0.5
-  R=$(relay_of chatty)
+  echo "noisy: OOM-kill the relay (it must allocate to be killed: this app writes 640 KB/s of output):"
+  "$M" start noisy >/dev/null; sleep 0.5
+  R=$(relay_of noisy)
   echo "$R" > "$CG/cgroup.procs"
   for l in $STEPS; do
     kill -0 "$R" 2>/dev/null || break
@@ -115,10 +115,10 @@ if [ -n "$CG" ]; then
   done
   i=0; while kill -0 "$R" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
   ok "the kernel OOM-killed the relay" "! kill -0 $R 2>/dev/null && grep -q 'oom_kill [1-9]' '$CG/$EVENTS'"
-  ok "the app does not outlive its relay" "gone_within chatty 3"
-  ok "status reports exited" "[ \"\$(status_of chatty)\" = exited ]"
-  "$M" start chatty >/dev/null
-  ok "start runs exactly one copy" "sleep 0.5; [ \$(copies chatty) -eq 1 ] && [ \$(relays chatty) -eq 1 ]"
+  ok "the app does not outlive its relay" "gone_within noisy 3"
+  ok "status reports exited" "[ \"\$(status_of noisy)\" = exited ]"
+  "$M" start noisy >/dev/null
+  ok "start runs exactly one copy" "sleep 0.5; [ \$(copies noisy) -eq 1 ] && [ \$(relays noisy) -eq 1 ]"
 else
   echo "SKIP  OOM kill (needs root and a writable memory cgroup)"
 fi
