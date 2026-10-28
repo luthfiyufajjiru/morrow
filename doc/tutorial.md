@@ -107,6 +107,8 @@ sudo morrow create --user svc-api -w /srv/api api /srv/api/server
 sudo morrow update --user "" api /srv/api/server              # back to root
 ```
 
+`create` and `start` print a warning to stderr when an app would run as root/Administrator (an elevated install without `--user`); the command still succeeds.
+
 The supervisor stays root (it writes the logs and decrypts the app's secured variables, which the app still receives), and only the app runs as `svc-api`, with that account's `HOME`/`USER`. The account needs read access to the executable and the working directory.
 
 On **Windows**, starting a process as another account needs its password. Pass it through an environment variable, so it never appears on the command line; Morrow stores it encrypted with the master key:
