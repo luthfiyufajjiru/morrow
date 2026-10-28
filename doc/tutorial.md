@@ -99,6 +99,16 @@ sudo morrow update --max-restarts 10 api /srv/api/server        # default 5
 
 Restarts wait 1s, 2s, 4s, ... (at most a minute) and give up after `--max-restarts` restarts in a row; an app that ran for at least a minute before exiting starts counting from zero again. While it waits the status is `restarting`, and `morrow stop` cancels the restart. Each restart re-reads the app's variables, so a rotated secret takes effect, and keeps the `start -e` values. Every decision is written to the app's log, e.g. `[morrow] exited unexpectedly after 3s (exit code 1); restarting in 2s (attempt 2/5)`.
 
+**Health checks.** A restart policy only acts when the app exits. An app that hangs (deadlocked, stuck on a dead connection) keeps running. Give it a health check, and its relay restarts it when it stops answering:
+
+```bash
+sudo morrow create --health-url http://127.0.0.1:8080/healthz api /srv/api/server
+sudo morrow update --health-interval 5s --health-failures 3 api /srv/api/server   # defaults: 10s and 3
+sudo morrow update --health-url "" api /srv/api/server                            # remove the check
+```
+
+While the app runs, its relay sends a GET to the URL every `--health-interval`. Any answer below HTTP 400 passes. Redirects are not followed, proxy variables are ignored, and the timeout is the interval, at most 10s. The first check comes one interval after the start, so a slow-starting app has `--health-failures` x `--health-interval` to come up. After `--health-failures` failures in a row, the app is stopped like `morrow stop` (SIGTERM, then SIGKILL after 10s) and restarted with the usual backoff. This happens with any restart policy, including `no`, and counts against `--max-restarts`. Each failure and the restart are written to the app's log (`[morrow] health check failed (2/3): HTTP 503`), and the `unhealthy` hook event fires. `morrow detail` shows the check. A check does not delay `start`: it returns as soon as the app has been launched.
+
 **Running as a dedicated account.** On a system install apps run as root/Administrator unless you say otherwise. Run each app as its own unprivileged account, so a compromised app cannot read the master key, other apps' data or anything root owns:
 
 ```bash
@@ -129,7 +139,7 @@ sudo morrow hook test api <id>    # fire it now with a sample event
 sudo morrow hook remove api <id>
 ```
 
-Events: `crash` (non-zero exit or a signal), `exit` (exit code 0), `giveup` (the restart policy stopped). Commands get `MORROW_EVENT`, `MORROW_APP_NAME`, `MORROW_EXIT_CODE`, `MORROW_EXIT_SIGNAL`, `MORROW_RESTART_COUNT`, `MORROW_EVENT_TIME` and `MORROW_HOST`; webhooks receive the same fields as a JSON POST. Hooks run as the supervisor (root/Administrator on a system install) with a timeout, and are stored encrypted with the master key, since commands and URLs often hold tokens. The app's log records whether each hook ran, naming only the webhook's host.
+Events: `crash` (non-zero exit or a signal), `exit` (exit code 0), `giveup` (the restart policy stopped), `unhealthy` (the health check failed and the app is being restarted). Without `--on`, a hook gets `crash`, `giveup` and `unhealthy`. Commands get `MORROW_EVENT`, `MORROW_APP_NAME`, `MORROW_EXIT_CODE`, `MORROW_EXIT_SIGNAL`, `MORROW_RESTART_COUNT`, `MORROW_EVENT_TIME` and `MORROW_HOST`; webhooks receive the same fields as a JSON POST. Hooks run as the supervisor (root/Administrator on a system install) with a timeout, and are stored encrypted with the master key, since commands and URLs often hold tokens. The app's log records whether each hook ran, naming only the webhook's host.
 
 **Reboots.** Run this once on a server:
 
@@ -303,7 +313,7 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 
 **Can a regular user see my secrets?** No. They see `****`. The key is readable only by root/Administrators, and the CI permission tests try to read it, copy the database, plant files and use their own key; all of that fails.
 
-**Can Morrow tell me when an app crashes?** Yes: `morrow hook add` runs a command or calls a webhook (Slack, PagerDuty, your own endpoint) on `crash`, `exit` or `giveup`. See [section 2](#2-run-your-first-app).
+**Can Morrow tell me when an app crashes?** Yes: `morrow hook add` runs a command or calls a webhook (Slack, PagerDuty, your own endpoint) on `crash`, `exit`, `giveup` or `unhealthy`. See [section 2](#2-run-your-first-app).
 
 **Can my CI/CD pipeline set secrets without being admin?** Yes, with the inbox (section 5). It can only set the variables you granted, in the format you chose, and cannot read any secret, including the ones it submitted.
 

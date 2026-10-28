@@ -28,6 +28,9 @@ var maxRestarts int
 var stopTimeout time.Duration
 var runAs string
 var passwordEnv string
+var healthURL string
+var healthInterval time.Duration
+var healthFailures int
 
 // applyRunAsFlags sets the run-as account when --user was given. The Windows
 // password comes from the environment variable named by --password-env, so it
@@ -75,6 +78,29 @@ func warnIfRoot(name string) {
 	}
 }
 
+// applyHealthFlags sets the health check when any --health-* flag was given,
+// keeping the current value of the others.
+func applyHealthFlags(cmd *cobra.Command, name string) error {
+	if !cmd.Flags().Changed("health-url") && !cmd.Flags().Changed("health-interval") && !cmd.Flags().Changed("health-failures") {
+		return nil
+	}
+	detail, err := app.GetAppDetail(name)
+	if err != nil {
+		return err
+	}
+	u, interval, failures := detail.HealthURL, time.Duration(detail.HealthInterval)*time.Second, detail.HealthFailures
+	if cmd.Flags().Changed("health-url") {
+		u = healthURL
+	}
+	if cmd.Flags().Changed("health-interval") {
+		interval = healthInterval
+	}
+	if cmd.Flags().Changed("health-failures") {
+		failures = healthFailures
+	}
+	return app.SetHealthCheck(name, u, interval, failures)
+}
+
 // applyRestartFlags sets the restart policy when --restart or --max-restarts
 // was given, keeping the current value of the other one.
 func applyRestartFlags(cmd *cobra.Command, name string) error {
@@ -114,6 +140,10 @@ var CreateAppCmd = &cobra.Command{
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		if err := applyRestartFlags(cmd, name); err != nil {
+			log.Fatalf("Error: %v", privilege.Hint(err))
+		}
+		if err := applyHealthFlags(cmd, name); err != nil {
+			_ = app.DeleteApp(name, false) // do not leave a half-configured app behind
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		if err := applyRunAsFlags(cmd, name); err != nil {
@@ -158,6 +188,11 @@ var DetailAppCmd = &cobra.Command{
 		fmt.Printf("| %-26s | %-40s |\n", "Run As", runAsText)
 		fmt.Printf("| %-26s | %-40s |\n", "Restart Policy",
 			fmt.Sprintf("%s (max %d, restarted %d)", detail.RestartPolicy, detail.MaxRestarts, detail.RestartCount))
+		health := "(none)"
+		if detail.HealthURL != "" {
+			health = fmt.Sprintf("GET %s every %ds, restart after %d failures", detail.HealthURL, detail.HealthInterval, detail.HealthFailures)
+		}
+		fmt.Printf("| %-26s | %-40s |\n", "Health Check", health)
 		if detail.LastExitCode != nil {
 			last := fmt.Sprintf("exit code %d", *detail.LastExitCode)
 			if detail.LastExitSignal != "" {
@@ -302,6 +337,9 @@ var UpdateAppCmd = &cobra.Command{
 		if err := applyRestartFlags(cmd, name); err != nil {
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
+		if err := applyHealthFlags(cmd, name); err != nil {
+			log.Fatalf("Error: %v", privilege.Hint(err))
+		}
 		if err := applyRunAsFlags(cmd, name); err != nil {
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
@@ -390,6 +428,14 @@ func init() {
 			"Run the app as this account instead of root/Administrator (empty clears it); Windows also needs --password-env")
 		c.Flags().StringVar(&passwordEnv, "password-env", "",
 			"Windows: name of an environment variable holding the --user account's password (stored encrypted)")
+	}
+	for _, c := range []*cobra.Command{CreateAppCmd, UpdateAppCmd} {
+		c.Flags().StringVar(&healthURL, "health-url", "",
+			"HTTP(S) URL the relay checks while the app runs; a status of 400+ or no answer is a failure (empty removes the check)")
+		c.Flags().DurationVar(&healthInterval, "health-interval", app.DefaultHealthInterval,
+			"How often to check --health-url (whole seconds; the first check is one interval after the start)")
+		c.Flags().IntVar(&healthFailures, "health-failures", app.DefaultHealthFailures,
+			"Restart the app after this many failed health checks in a row (counts against --max-restarts)")
 	}
 	for _, c := range []*cobra.Command{StopAppCmd, RestartAppCmd} {
 		c.Flags().DurationVar(&stopTimeout, "timeout", app.DefaultStopTimeout,

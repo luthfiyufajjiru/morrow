@@ -40,6 +40,9 @@ type Application struct {
 	LastExitSignal       string            `json:"application_last_exit_signal,omitempty"`
 	LastExitTime         *time.Time        `json:"application_last_exit_time,omitempty"`
 	RunAs                string            `json:"application_run_as,omitempty"`
+	HealthURL            string            `json:"application_health_url,omitempty"`
+	HealthInterval       int               `json:"application_health_interval_seconds,omitempty"`
+	HealthFailures       int               `json:"application_health_failures,omitempty"`
 }
 
 // GetAppDetail retrieves full information for a named application.
@@ -57,7 +60,8 @@ func GetAppDetail(name string) (*Application, error) {
 		       application_creation_time, application_update_time,
 		       application_status_time, application_last_run_time,
 		       application_restart_policy, application_max_restarts, application_restart_count,
-		       application_desired_state, application_last_exit_code, application_last_exit_signal, application_last_exit_time, application_run_as
+		       application_desired_state, application_last_exit_code, application_last_exit_signal, application_last_exit_time, application_run_as,
+		       application_health_url, application_health_interval, application_health_failures
 		FROM applications WHERE application_name = ?
 	`, name).Scan(
 		&app.ID, &app.Name, &app.ExecutablePath, &argsJSON,
@@ -65,6 +69,7 @@ func GetAppDetail(name string) (*Application, error) {
 		&statusTimeStr, &lastRunTimeStr,
 		&app.RestartPolicy, &app.MaxRestarts, &app.RestartCount,
 		&app.DesiredState, &lastExitCode, &app.LastExitSignal, &lastExitTimeStr, &app.RunAs,
+		&app.HealthURL, &app.HealthInterval, &app.HealthFailures,
 	)
 
 	if err != nil {
