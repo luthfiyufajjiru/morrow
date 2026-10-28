@@ -11,6 +11,7 @@ import (
 	"morrow/internal/config"
 	"morrow/internal/privilege"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -47,6 +48,31 @@ func applyRunAsFlags(cmd *cobra.Command, name string) error {
 		password = v
 	}
 	return app.SetRunAs(name, runAs, password)
+}
+
+// rootWarning is the warning shown when an app would run with the
+// supervisor's own elevated account, or "" if it would not.
+func rootWarning(name, runAs string, elevated bool, goos string) string {
+	if runAs != "" || !elevated {
+		return ""
+	}
+	who, hint := "root", "sudo morrow update "+name+" --user <account>"
+	if goos == "windows" {
+		who, hint = "an Administrator (as SYSTEM after a reboot)", "morrow update "+name+" --user <account> --password-env <VAR>"
+	}
+	return fmt.Sprintf("Warning: %s runs as %s, so if it is compromised it can read the master key and every app's secrets.\n"+
+		"Run it as an unprivileged account instead: %s", name, who, hint)
+}
+
+// warnIfRoot prints rootWarning for the app to stderr.
+func warnIfRoot(name string) {
+	detail, err := app.GetAppDetail(name)
+	if err != nil {
+		return
+	}
+	if w := rootWarning(name, detail.RunAs, privilege.IsElevated(), runtime.GOOS); w != "" {
+		fmt.Fprintln(os.Stderr, w)
+	}
 }
 
 // applyRestartFlags sets the restart policy when --restart or --max-restarts
@@ -95,6 +121,7 @@ var CreateAppCmd = &cobra.Command{
 			log.Fatalf("Error: %v", privilege.Hint(err))
 		}
 		fmt.Printf("Successfully created application %s\n", name)
+		warnIfRoot(name)
 	},
 }
 
@@ -175,6 +202,7 @@ var StartAppCmd = &cobra.Command{
 			log.Fatalf("Error starting app %s: %v", name, privilege.Hint(err))
 		}
 		fmt.Printf("Successfully started application %s with PID %d\n", name, pid)
+		warnIfRoot(name)
 	},
 }
 
