@@ -23,6 +23,10 @@ func TestHelperProcess(t *testing.T) {
 	if code == "" {
 		return
 	}
+	if code == "sleep" { // a long-running app
+		time.Sleep(time.Minute)
+		return
+	}
 	fmt.Println("helper output")
 	n, _ := strconv.Atoi(code)
 	os.Exit(n)
@@ -141,6 +145,12 @@ func TestDecide(t *testing.T) {
 			want{"exited", false, "crash,giveup", 3, "gave up after 3 restarts"}},
 		{"stable run resets count", PolicyUnlessStopped, 3, 3, "running", 5 * time.Minute, ExitInfo{Code: 1},
 			want{"restarting", true, "crash", 1, "attempt 1/3"}},
+		{"unhealthy, policy no", PolicyNo, 5, 0, "running", time.Minute, ExitInfo{Code: -1, Signal: "SIGTERM", Unhealthy: true},
+			want{"restarting", true, "unhealthy", 1, "was stopped as unhealthy after 1m0s (killed by SIGTERM); restarting in 1s"}},
+		{"unhealthy, budget used up", PolicyOnFailure, 2, 2, "running", time.Second, ExitInfo{Code: 0, Unhealthy: true},
+			want{"exited", false, "unhealthy,giveup", 2, "was stopped as unhealthy after 1s (exit code 0); gave up after 2 restarts"}},
+		{"unhealthy, but stopped by the user", PolicyNo, 5, 0, "stopping", time.Second, ExitInfo{Code: -1, Signal: "SIGTERM", Unhealthy: true},
+			want{"stopped", false, "", 0, "stopped"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

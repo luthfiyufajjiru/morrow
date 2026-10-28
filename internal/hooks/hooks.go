@@ -26,6 +26,8 @@ const (
 	EventCrash  = "crash"  // exited unexpectedly with a non-zero code or a signal
 	EventExit   = "exit"   // exited unexpectedly with code 0
 	EventGiveUp = "giveup" // the restart policy stopped restarting it
+	// EventUnhealthy: the health check failed too often; the app is restarted.
+	EventUnhealthy = "unhealthy"
 )
 
 // Hook kinds.
@@ -67,11 +69,11 @@ func ParseEvents(list []string) ([]string, error) {
 	for _, e := range list {
 		e = strings.TrimSpace(strings.ToLower(e))
 		switch e {
-		case EventCrash, EventExit, EventGiveUp:
+		case EventCrash, EventExit, EventGiveUp, EventUnhealthy:
 			out = append(out, e)
 		case "":
 		default:
-			return nil, fmt.Errorf("unknown event %q (use %s, %s or %s)", e, EventCrash, EventExit, EventGiveUp)
+			return nil, fmt.Errorf("unknown event %q (use %s, %s, %s or %s)", e, EventCrash, EventExit, EventGiveUp, EventUnhealthy)
 		}
 	}
 	if len(out) == 0 {

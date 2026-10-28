@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -167,6 +168,8 @@ func buildCommand(a *Application, envs []env.EnvVar, inline map[string]string) (
 type ExitInfo struct {
 	Code   int    // exit code; -1 when killed by a signal
 	Signal string // e.g. "SIGKILL"; empty unless killed by a signal
+	// Unhealthy: the relay stopped it after failed health checks.
+	Unhealthy bool
 }
 
 // Failed reports a non-zero exit code or death by signal.
@@ -230,17 +233,23 @@ func decide(name string, pid int, uptime time.Duration, exit ExitInfo, logf func
 	if exit.Failed() {
 		event = hooks.EventCrash
 	}
+	how := "exited unexpectedly"
+	if exit.Unhealthy {
+		event, how = hooks.EventUnhealthy, "was stopped as unhealthy"
+	}
 	if uptime >= stableAfter {
 		count = 0
 	}
 	ran := uptime.Round(time.Second)
-	wants := policy == PolicyUnlessStopped || (policy == PolicyOnFailure && exit.Failed())
+	// An unhealthy app is restarted whatever the policy: that is the point
+	// of the health check. It still counts against --max-restarts.
+	wants := exit.Unhealthy || policy == PolicyUnlessStopped || (policy == PolicyOnFailure && exit.Failed())
 	if !wants {
 		logf(fmt.Sprintf("[morrow] exited unexpectedly after %s (%s); not restarting (restart policy is '%s')", ran, exit, policy))
 		return decision{events: []string{event}, count: count}, setStatusPID0(name, "exited", cond)
 	}
 	if count >= maxRestarts {
-		logf(fmt.Sprintf("[morrow] exited unexpectedly after %s (%s); gave up after %d restarts", ran, exit, count))
+		logf(fmt.Sprintf("[morrow] %s after %s (%s); gave up after %d restarts", how, ran, exit, count))
 		return decision{events: []string{event, hooks.EventGiveUp}, count: count}, setStatusPID0(name, "exited", cond)
 	}
 	count++
@@ -252,8 +261,8 @@ func decide(name string, pid int, uptime time.Duration, exit ExitInfo, logf func
 		return decision{}, err
 	}
 	wait := backoff(count)
-	logf(fmt.Sprintf("[morrow] exited unexpectedly after %s (%s); restarting in %s (attempt %d/%d)",
-		ran, exit, wait, count, maxRestarts))
+	logf(fmt.Sprintf("[morrow] %s after %s (%s); restarting in %s (attempt %d/%d)",
+		how, ran, exit, wait, count, maxRestarts))
 	return decision{restart: true, wait: wait, events: []string{event}, count: count}, nil
 }
 
@@ -369,7 +378,14 @@ func Supervise(name string, req StartRequest, report io.WriteCloser, logw io.Wri
 		}
 
 		started := time.Now()
+		var unhealthy atomic.Bool
+		exited := make(chan struct{})
+		if a.HealthURL != "" {
+			go watchHealth(a, pid, exited, &unhealthy, logf)
+		}
 		exit := ch.Wait()
+		close(exited)
+		exit.Unhealthy = unhealthy.Load()
 		select {
 		case <-copied:
 		case <-time.After(drainTimeout):

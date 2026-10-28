@@ -117,12 +117,12 @@ Open a new shell afterwards. Completion works before `init` and for regular user
 | Delete environment variable | `morrow del-env <app-name> <env-name>` |
 | List environment variables | `morrow list-env <app-name>` |
 | List All Applications | `morrow list` |
-| Create Application | `morrow create [-w <workdir>] [--restart no\|on-failure\|unless-stopped] [--max-restarts N] [--user <account> [--password-env VAR]] <app-name> <exec-path> <args...>` |
+| Create Application | `morrow create [-w <workdir>] [--restart no\|on-failure\|unless-stopped] [--max-restarts N] [--health-url URL [--health-interval 10s] [--health-failures 3]] [--user <account> [--password-env VAR]] <app-name> <exec-path> <args...>` |
 | Delete Application | `morrow delete <app-name>` |
 | Start Application | `morrow start <app-name> [-e KEY=VALUE...]` |
 | Stop Application (SIGTERM, wait, then kill) | `morrow stop [--timeout 10s] <app-name>` |
 | Restart Application | `morrow restart [--timeout 10s] <app-name>` |
-| Update Application | `morrow update [-w <workdir>] [--restart ...] [--max-restarts N] <app-name> <exec-path> <args...>` |
+| Update Application | `morrow update [-w <workdir>] [--restart ...] [--max-restarts N] [--health-url URL ...] <app-name> <exec-path> <args...>` |
 | Get Application Status | `morrow status <app-name>` |
 | Get Application Detail | `morrow detail <app-name>` |
 | Get Application Logs | `morrow logs <app-name>` |
@@ -133,7 +133,7 @@ Open a new shell afterwards. Completion works before `init` and for regular user
 | Store submitted secrets (admin; normally automatic) | `morrow apply` |
 | Show submission outcomes (never values) | `morrow inbox` |
 | Shell completion script (bash, zsh, fish, powershell) | `morrow completion <shell>` |
-| Alert on crash: run a command or call a webhook (admin) | `morrow hook add <app> --on crash,exit,giveup (--exec <cmd> \| --webhook <url>)` |
+| Alert on crash: run a command or call a webhook (admin) | `morrow hook add <app> --on crash,exit,giveup,unhealthy (--exec <cmd> \| --webhook <url>)` |
 | List, test or remove alert hooks | `morrow hook list [app]`, `morrow hook test <app> <id>`, `morrow hook remove <app> <id>` |
 | Start apps at boot (systemd unit / Windows scheduled task as SYSTEM) (admin) | `morrow startup [--after UNIT]... [--status] [--remove]` |
 | Uninstall: stop apps, remove the inbox, keep data; `--purge` deletes data too (admin) | `morrow uninstall [--dry-run] [--purge] [--backup-key <file>] [--yes]` |

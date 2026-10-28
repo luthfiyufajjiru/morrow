@@ -95,6 +95,12 @@ jobs:
         run: |
           sh test/e2e/relay.sh "$PWD/bin/morrow"
           sudo sh test/e2e/relay.sh "$PWD/bin/morrow" nobody
+      - name: health checks (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          go build -o bin/healthapp ./test/e2e/healthapp
+          sh test/e2e/health.sh "$PWD/bin/morrow" "$PWD/bin/healthapp"
+          sudo sh test/e2e/health.sh "$PWD/bin/morrow" "$PWD/bin/healthapp" nobody
       - name: lifecycle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

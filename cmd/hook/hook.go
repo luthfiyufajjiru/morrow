@@ -153,9 +153,9 @@ func completeHookIDs(cmd *cobra.Command, args []string, toComplete string) ([]st
 }
 
 func init() {
-	addCmd.Flags().StringSliceVar(&events, "on", []string{hooks.EventCrash, hooks.EventGiveUp}, "Events: crash, exit, giveup")
+	addCmd.Flags().StringSliceVar(&events, "on", []string{hooks.EventCrash, hooks.EventGiveUp, hooks.EventUnhealthy}, "Events: crash, exit, giveup, unhealthy")
 	addCmd.Flags().StringVar(&execCmd, "exec", "", "Command to run (sh -c on Linux/macOS, cmd /C on Windows)")
 	addCmd.Flags().StringVar(&webhook, "webhook", "", "URL to POST a JSON event to")
-	_ = addCmd.RegisterFlagCompletionFunc("on", cobra.FixedCompletions([]string{hooks.EventCrash, hooks.EventExit, hooks.EventGiveUp}, cobra.ShellCompDirectiveNoFileComp))
+	_ = addCmd.RegisterFlagCompletionFunc("on", cobra.FixedCompletions([]string{hooks.EventCrash, hooks.EventExit, hooks.EventGiveUp, hooks.EventUnhealthy}, cobra.ShellCompDirectiveNoFileComp))
 	HookCmd.AddCommand(addCmd, listCmd, removeCmd, testCmd)
 }

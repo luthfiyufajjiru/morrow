@@ -100,20 +100,22 @@ if [ "$(id -u)" = 0 ]; then
   elif [ -d /sys/fs/cgroup/memory ] && [ -w /sys/fs/cgroup/memory/cgroup.procs ]; then
     CG=/sys/fs/cgroup/memory/morrow-e2e-oom; mkdir -p "$CG"; LIMIT=memory.limit_in_bytes; EVENTS=memory.oom_control
     # A single limit far below usage is refused (EBUSY): step down.
-    STEPS="8M 4M 2M 1M 512K 256K 128K 64K"
+    STEPS="8M 4M 2M 1M 512K 256K 128K 64K 32K 16K"
     echo 1 > "$CG/memory.move_charge_at_immigrate"
   fi
 fi
 if [ -n "$CG" ]; then
   echo "noisy: OOM-kill the relay (it must allocate to be killed: this app writes 640 KB/s of output):"
-  "$M" start noisy >/dev/null; sleep 0.5
+  "$M" start noisy >"$H/noisy.start" 2>&1; sleep 0.5
   R=$(relay_of noisy)
+  [ -n "$R" ] || echo "  (no relay PID: $(cat "$H/noisy.start"); status $(status_of noisy))"
   echo "$R" > "$CG/cgroup.procs"
   for l in $STEPS; do
     kill -0 "$R" 2>/dev/null || break
     echo "$l" > "$CG/$LIMIT" 2>/dev/null; sleep 0.5
   done
-  i=0; while kill -0 "$R" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  i=0; while kill -0 "$R" 2>/dev/null && [ $i -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+  kill -0 "$R" 2>/dev/null && echo "  (relay $R survived: limit $(cat "$CG/$LIMIT"), procs $(tr '\n' ' ' < "$CG/cgroup.procs"), $(tr '\n' ' ' < "$CG/$EVENTS"))"
   ok "the kernel OOM-killed the relay" "! kill -0 $R 2>/dev/null && grep -q 'oom_kill [1-9]' '$CG/$EVENTS'"
   ok "the app does not outlive its relay" "gone_within noisy 3"
   ok "status reports exited" "[ \"\$(status_of noisy)\" = exited ]"
