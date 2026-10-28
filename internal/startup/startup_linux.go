@@ -41,6 +41,9 @@ func Units(names []string) ([]string, error) {
 // Unit renders the systemd unit. It is a oneshot that stays active, so
 // systemd runs ExecStop at shutdown; KillMode=process keeps the detached
 // apps out of systemd's own stop, letting ExecStop stop them gracefully.
+// Apps started at boot run in this unit's cgroup; OOMPolicy=continue keeps
+// the unit active when the kernel kills one of them for memory, so ExecStop
+// still runs at shutdown (the default would deactivate the unit).
 // after lists local services (e.g. postgresql.service) that must be up
 // before the apps start. Being ordered after them also means, at shutdown,
 // the apps are stopped before those services.
@@ -62,6 +65,7 @@ ExecStart=%[1]s _boot
 ExecStop=%[1]s _shutdown
 TimeoutStopSec=120
 KillMode=process
+OOMPolicy=continue
 
 [Install]
 WantedBy=multi-user.target

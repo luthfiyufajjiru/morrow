@@ -313,7 +313,9 @@ sudo morrow uninstall --purge --backup-key ~/morrow.key.bak   # also delete data
 
 **Where do my app's logs go and who can read them?** `<logs>/<app>.log` (`/var/log/morrow` or `%ProgramData%\Morrow\logs`). Only root/Administrators, because apps sometimes print secrets.
 
-**What happens after a reboot?** With `sudo morrow startup` installed, the apps you had started (and not stopped) start again automatically. Without it, `morrow list` shows them as `stopped` until you start them.
+**What happens after a reboot?** With `sudo morrow startup` installed, the apps you had started (and not stopped) start again automatically. Without it, `morrow list` shows them as `exited` until you start them.
+
+**What if an app's relay is killed?** Each app runs under a small relay process that logs its output, records its exit and restarts it. If the relay is killed (`kill -9`, the OOM killer), on Linux the kernel sends the app SIGTERM at once, so it does not keep running unsupervised. The next `morrow` command that looks at the app (`status`, `list`, `start`, the boot hook) records it as `exited`, writes "the supervising relay died" to its log, and stops anything still left of it, for example a child process, or an app that ignores SIGTERM (SIGKILL after 5 seconds). Run `morrow start` to start it again; it stays wanted, so the next boot starts it too. Restart policies and alert hooks cannot run while there is no relay. Each app has at most one relay, so two `start`s at once never run two copies. On Windows there is no SIGTERM step: the app is stopped by the next command that looks at it.
 
 **Does the inbox work in per-user mode?** No, there is no one to protect secrets from there. Use `set-env`.
 

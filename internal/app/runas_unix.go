@@ -27,6 +27,7 @@ func checkRunAsAccount(account, password string) error {
 // Switching account needs the supervisor to run as root.
 func startChild(cmd *exec.Cmd, _ []string, account, _ string) (child, error) {
 	detachProcess(cmd)
+	setDeathSignal(cmd)
 	if account != "" {
 		u, err := user.Lookup(account)
 		if err != nil {

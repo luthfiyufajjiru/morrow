@@ -11,7 +11,8 @@ func TestUnit(t *testing.T) {
 		"ExecStart=/usr/local/bin/morrow _boot",
 		"ExecStop=/usr/local/bin/morrow _shutdown",
 		"Type=oneshot", "RemainAfterExit=yes", // stays active so ExecStop runs at shutdown
-		"KillMode=process", // systemd must not kill the apps itself
+		"KillMode=process",   // systemd must not kill the apps itself
+		"OOMPolicy=continue", // an OOM-killed app must not deactivate the unit
 		"Wants=network-online.target", "After=network-online.target", "WantedBy=multi-user.target",
 	} {
 		if !strings.Contains(u, want) {

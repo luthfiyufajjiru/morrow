@@ -148,24 +148,6 @@ const maskedValue = "****"
 // ErrNotRunning is returned by StopApp for an app that is not running.
 var ErrNotRunning = errors.New("is not running")
 
-// reconcileStatus treats a "running" app whose PID no longer exists (crash
-// without relay, reboot, killed relay) as stopped, and persists that so later
-// commands never signal a PID the OS may have reused. The write is best
-// effort: callers without write access still get the corrected view.
-func reconcileStatus(name string, status string, pid int) (string, int) {
-	if (status != "running" && status != "stopping") || isProcessAlive(pid) {
-		return status, pid
-	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	_, _ = db.DB.Exec(`
-		UPDATE applications
-		SET application_status = 'stopped', application_pid = 0,
-		    application_status_time = ?, application_update_time = ?
-		WHERE application_name = ? AND application_status = ? AND application_pid = ?
-	`, now, now, name, status, pid)
-	return "stopped", 0
-}
-
 // resolveWorkingDir converts a user-supplied working directory to an absolute
 // path and checks that it is an existing directory. Empty means "inherit".
 func resolveWorkingDir(dir string) (string, error) {
@@ -228,6 +210,15 @@ func startApp(name string, inlineEnvs map[string]string, resetCount bool) (int, 
 	}
 	if app.Status == "running" && app.PID != 0 {
 		return 0, fmt.Errorf("application %s is already running with PID %d", name, app.PID)
+	}
+	if app.Status == "restarting" && relayState(name) == relayAlive {
+		// Its relay is waiting to restart it: take over instead.
+		if err := setStatus(name, "stopped", "application_status = 'restarting'"); err != nil {
+			return 0, err
+		}
+		if !endRelay(name, killWait) {
+			return 0, fmt.Errorf("application %s is waiting to be restarted and its relay (PID %d) did not exit", name, relayPID(name))
+		}
 	}
 
 	// Resolve env values before spawning anything. Secured values need read
@@ -303,10 +294,17 @@ func stopApp(name string, timeout time.Duration, byUser bool) error {
 		}
 	}
 
-	// The relay sees the pipe close, records the stop and exits; give it a
-	// moment, then make sure it is gone.
+	// The relay sees the pipe close, records the stop and releases its lock;
+	// give it a moment, then make sure it is gone. A relay that took no lock
+	// (started by an older version) is found by its PID file.
 	relayPIDFile := config.GetRelayPIDFilePath(name)
-	if data, readErr := os.ReadFile(relayPIDFile); readErr == nil {
+	if relayState(name) != relayUnknown {
+		deadline := time.Now().Add(3 * time.Second)
+		for relayState(name) == relayAlive && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		_ = endRelay(name, killWait)
+	} else if data, readErr := os.ReadFile(relayPIDFile); readErr == nil {
 		if relayPID, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && relayPID > 0 {
 			if !waitExit(relayPID, 3*time.Second) {
 				_ = forceKill(relayPID)
