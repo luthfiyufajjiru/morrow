@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"morrow/internal/config"
 	"morrow/internal/db"
 	"morrow/internal/env"
 	"morrow/internal/hooks"
@@ -118,7 +117,6 @@ func launchSupervisor(name string, req StartRequest) (int, error) {
 		return 0, fmt.Errorf("failed to start the supervising relay: %w", err)
 	}
 	relayPID := cmd.Process.Pid
-	_ = os.WriteFile(config.GetRelayPIDFilePath(name), []byte(strconv.Itoa(relayPID)), 0644)
 
 	_ = json.NewEncoder(stdin).Encode(req)
 	stdin.Close()
@@ -141,7 +139,6 @@ func launchSupervisor(name string, req StartRequest) (int, error) {
 	if pidText, ok := strings.CutPrefix(report, "started "); ok {
 		return strconv.Atoi(pidText)
 	}
-	_ = os.Remove(config.GetRelayPIDFilePath(name))
 	if msg, ok := strings.CutPrefix(report, "error "); ok {
 		return 0, fmt.Errorf("failed to start process: %s", msg)
 	}
@@ -303,6 +300,15 @@ func Supervise(name string, req StartRequest, report io.WriteCloser, logw io.Wri
 			logf("[morrow] alert hooks still running; not waiting for them")
 		}
 	}()
+
+	// One relay per app. Deferred after the hook wait, so the lock is
+	// released as soon as there is no app to supervise.
+	release, err := acquireRelay(name)
+	if err != nil {
+		reportf("error " + err.Error())
+		return err
+	}
+	defer release()
 
 	first := true
 	for {

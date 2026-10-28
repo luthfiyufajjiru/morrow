@@ -89,6 +89,12 @@ jobs:
       - name: lifecycle (Linux)
         if: runner.os == 'Linux'
         run: sh test/e2e/lifecycle.sh "$PWD/bin/morrow"
+      - name: relay death (Linux)
+        if: runner.os == 'Linux'
+        # As a regular user, then as root with --user and a real OOM kill.
+        run: |
+          sh test/e2e/relay.sh "$PWD/bin/morrow"
+          sudo sh test/e2e/relay.sh "$PWD/bin/morrow" nobody
       - name: lifecycle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

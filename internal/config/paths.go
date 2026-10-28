@@ -144,6 +144,12 @@ func GetLogFilePath(appName string) string {
 	return filepath.Join(GetLogsDir(), fmt.Sprintf("%s.log", appName))
 }
 
+// GetRelayLockPath returns the path to the lock file a relay holds while it
+// supervises the app.
+func GetRelayLockPath(appName string) string {
+	return filepath.Join(GetLogsDir(), fmt.Sprintf("%s.relay.lock", appName))
+}
+
 // GetRelayPIDFilePath returns the path to the PID file for the log relay sidecar.
 func GetRelayPIDFilePath(appName string) string {
 	return filepath.Join(GetLogsDir(), fmt.Sprintf("%s.relay.pid", appName))

@@ -7,8 +7,7 @@ import (
 	"morrow/internal/config"
 	"morrow/internal/db"
 	"os"
-	"strconv"
-	"strings"
+	"runtime"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -39,7 +38,9 @@ var RelayCmd = &cobra.Command{
 			Compress:   true, // gzip rotated files
 		}
 		defer logger.Close()
-		defer removeOwnPIDFile(config.GetRelayPIDFilePath(appName))
+		// The app's parent-death signal is tied to the thread that starts it
+		// (Supervise runs here): keep that thread for the relay's lifetime.
+		runtime.LockOSThread()
 
 		if err := db.InitDB(config.GetDBPath()); err != nil {
 			fmt.Println("error cannot open database:", err)
@@ -49,16 +50,4 @@ var RelayCmd = &cobra.Command{
 
 		_ = app.Supervise(appName, req, os.Stdout, logger)
 	},
-}
-
-// removeOwnPIDFile deletes the relay PID file only if it still holds this
-// process's PID (a newer relay may have replaced it).
-func removeOwnPIDFile(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid == os.Getpid() {
-		_ = os.Remove(path)
-	}
 }
