@@ -135,7 +135,7 @@ Open a new shell afterwards. Completion works before `init` and for regular user
 | Shell completion script (bash, zsh, fish, powershell) | `morrow completion <shell>` |
 | Alert on crash: run a command or call a webhook (admin) | `morrow hook add <app> --on crash,exit,giveup (--exec <cmd> \| --webhook <url>)` |
 | List, test or remove alert hooks | `morrow hook list [app]`, `morrow hook test <app> <id>`, `morrow hook remove <app> <id>` |
-| Start apps at boot (systemd unit / Windows scheduled task as SYSTEM) (admin) | `morrow startup [--status] [--remove]` |
+| Start apps at boot (systemd unit / Windows scheduled task as SYSTEM) (admin) | `morrow startup [--after UNIT]... [--status] [--remove]` |
 | Uninstall: stop apps, remove the inbox, keep data; `--purge` deletes data too (admin) | `morrow uninstall [--dry-run] [--purge] [--backup-key <file>] [--yes]` |
 
 ## Detail Application Example

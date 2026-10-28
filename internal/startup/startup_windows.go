@@ -4,6 +4,7 @@
 package startup
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 )
@@ -28,7 +29,11 @@ func Installed() (string, bool) {
 }
 
 // Install registers the scheduled task.
-func Install(exe string) (string, error) {
+func Install(exe string, after []string) (string, error) {
+	if len(after) > 0 {
+		return "", errors.New("--after needs systemd; on Windows the startup task waits 15 seconds after boot instead. " +
+			"Make the app retry its connections, or use --restart on-failure with enough --max-restarts")
+	}
 	if out, err := exec.Command("schtasks", TaskArgs(exe)...).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("schtasks failed: %v: %s", err, out)
 	}

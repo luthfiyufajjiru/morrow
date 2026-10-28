@@ -17,15 +17,20 @@ import (
 var (
 	startupRemove  bool
 	startupStatus  bool
+	startupAfter   []string
 	shutdownAlways bool
 )
 
 var StartupCmd = &cobra.Command{
-	Use:   "startup [--status] [--remove]",
+	Use:   "startup [--after UNIT]... [--status] [--remove]",
 	Short: "Start apps at boot and stop them gracefully at shutdown (admin)",
 	Long: `Install the OS hook that starts, at every boot, the apps you started and did
 not stop yourself: a systemd unit on Linux (which also stops them gracefully
 at shutdown), a scheduled task running as SYSTEM on Windows.
+
+--after UNIT (Linux, repeatable) starts the apps only once that local service
+is up, e.g. --after postgresql.service, and stops them before it at shutdown.
+Running startup again replaces the unit, so repeat every --after you need.
 
 --status shows whether the hook is installed and which apps it would start.
 --remove uninstalls the hook without stopping any app.`,
@@ -71,7 +76,7 @@ at shutdown), a scheduled task running as SYSTEM on Windows.
 		if err != nil {
 			log.Fatalf("Error: %v", err)
 		}
-		desc, err := startup.Install(exe)
+		desc, err := startup.Install(exe, startupAfter)
 		if err != nil {
 			log.Fatalf("Error: %v", err)
 		}
@@ -122,5 +127,6 @@ var ShutdownCmd = &cobra.Command{
 func init() {
 	StartupCmd.Flags().BoolVar(&startupRemove, "remove", false, "Uninstall the startup hook (running apps keep running)")
 	StartupCmd.Flags().BoolVar(&startupStatus, "status", false, "Show whether the hook is installed and which apps start at boot")
+	StartupCmd.Flags().StringArrayVar(&startupAfter, "after", nil, "Start apps only after this systemd unit, e.g. postgresql.service (repeatable, Linux)")
 	ShutdownCmd.Flags().BoolVar(&shutdownAlways, "always", false, "Stop the apps even if the system is not shutting down")
 }
